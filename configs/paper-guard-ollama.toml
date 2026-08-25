@@ -1,0 +1,96 @@
+# Paper Guard — local LLM (Ollama) configuration.
+#
+# Ollama exposes an OpenAI-compatible `/v1` endpoint. Paper Guard therefore
+# routes local models through the SAME OpenAICompatibleProvider as OpenAI /
+# Mammoth.ai: switching backends is a configuration change, never a code change.
+#
+# Standalone usage:
+#   paper-guard review paper.tex --config configs/paper-guard-ollama.toml
+#
+# Prerequisite: Ollama running locally, e.g.
+#   ollama serve
+#   ollama pull llama3.2
+
+[project]
+name = "my-paper"
+
+[input]
+# format = "latex"
+
+# --- LLM provider ----------------------------------------------------------
+# The same provider abstraction used for OpenAI / Mammoth.ai. Ollama is reached
+# through its OpenAI-compatible `/v1` endpoint.
+[llm]
+provider = "openai-compatible"
+
+# --- OpenAI-compatible backend (Ollama) ------------------------------------
+# Local Ollama typically requires NO API key. `api_key_env` is optional: when
+# absent or empty, requests are sent without an Authorization header. If a
+# particular setup does require a key, set `api_key_env = "OLLAMA_API_KEY"` and
+# export that variable; the key itself is NEVER stored in this file.
+[providers.openai-compatible]
+base_url = "http://localhost:11434/v1"
+# api_key_env = "OLLAMA_API_KEY"   # optional for local Ollama
+model = "llama3.2"
+timeout_seconds = 120
+max_retries = 2
+# Ollama generally supports structured JSON output via a JSON schema; if your
+# local model cannot honour `response_format` reliably, set this to false and
+# reviewer-side structured validation (REVIEWER_OUTPUT_INVALID) still protects
+# the pipeline.
+structured_output = true
+# Set to true only if the local model is genuinely multimodal (e.g. llava).
+vision = false
+
+# --- Reviewer LLM assignments ---------------------------------------------
+# Each reviewer independently uses the configured local model. With a local
+# Ollama model the run is deterministic-bracketed (reproducible inputs, real
+# but non-deterministic outputs); the ledger records the model + provider.
+[reviewers.scientific]
+enabled = true
+provider = "openai-compatible"
+model = "llama3.2"
+
+[reviewers.adversarial]
+enabled = true
+provider = "openai-compatible"
+model = "llama3.2"
+
+[reviewers.evidence]
+enabled = true
+provider = "openai-compatible"
+model = "llama3.2"
+
+[reviewers.references]
+enabled = true
+provider = "openai-compatible"
+model = "llama3.2"
+
+[reviewers.figures]
+enabled = true
+provider = "openai-compatible"
+model = "llama3.2"
+
+[judge]
+model = "llama3.2"
+require_human_approval_for_major = true
+
+[revision]
+require_human_approval_for_major = true
+output_dir = ".paper-guard"
+
+[reproducibility]
+seed = 42
+prompt_version = "v1"
+data_dir = ".paper-guard"
+
+[service]
+bind = "127.0.0.1:8080"
+allow_external_bind = false
+data_dir = ".paper-guard"
+
+[memory]
+backend = "none"
+qdrant_url = "http://localhost:6333"
+collection = "review_memory"
+require_approval = true

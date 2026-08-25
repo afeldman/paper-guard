@@ -1,0 +1,53 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/paper-guard-core",
+    "crates/paper-guard-llm",
+    "crates/paper-guard-parser",
+    "crates/paper-guard-renderer",
+    "crates/paper-guard-review",
+    "crates/paper-guard-agents",
+    "crates/paper-guard-ledger",
+    "crates/paper-guard-validation",
+    "crates/paper-guard-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["Paper Guard Contributors"]
+repository = "https://github.com/paper-guard/paper-guard"
+description = "A reproducible, multi-agent scientific review and revision workflow for papers."
+
+[workspace.dependencies]
+# --- Standard ---
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+tracing = "0.1"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+hex = "0.4"
+regex = "1"
+walkdir = "2"
+clap = { version = "4", features = ["derive"] }
+toml = "0.8"
+rust-loguru = "0.1"
+async-trait = "0.1"
+reqwest = { version = "0.13", features = ["json", "rustls", "rustls-native-certs"] }
+wiremock = "0.6"
+
+# --- Internal crates ---
+paper-guard-core = { path = "crates/paper-guard-core" }
+paper-guard-llm = { path = "crates/paper-guard-llm" }
+paper-guard-parser = { path = "crates/paper-guard-parser" }
+paper-guard-renderer = { path = "crates/paper-guard-renderer" }
+paper-guard-review = { path = "crates/paper-guard-review" }
+paper-guard-agents = { path = "crates/paper-guard-agents" }
+paper-guard-ledger = { path = "crates/paper-guard-ledger" }
+paper-guard-validation = { path = "crates/paper-guard-validation" }

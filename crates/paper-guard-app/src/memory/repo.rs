@@ -83,15 +83,13 @@ impl FileReviewMemory {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let store = FileStore {
-            entries: load_file::<Vec<ReviewMemoryEntry>>(path).unwrap_or_default(),
-        };
-        let entries = std::sync::Mutex::new(store.entries);
+        let entries = load_file::<FileStore>(path)
+            .map(|store| store.entries)
+            .unwrap_or_default();
         let repo = FileReviewMemory {
             path: path.to_path_buf(),
-            entries,
+            entries: std::sync::Mutex::new(entries),
         };
-        repo.persist()?;
         Ok(repo)
     }
 
@@ -315,5 +313,40 @@ mod tests {
         // assertable as evidence for a current manuscript.
         assert!(ctx.contains("HISTORICAL REVIEW MEMORY"));
         assert!(!ctx.contains("SUPPORTED"));
+    }
+
+    #[test]
+    fn reopening_a_file_store_preserves_entries() {
+        // Regression: reopening an existing file-backed store must NOT lose
+        // entries. The on-disk shape is a {entries:[...]} object; loading it as
+        // a bare Vec would drop everything on the next persist.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.json");
+        {
+            let repo = FileReviewMemory::open(&path).unwrap();
+            repo.store(entry("mem-persist", "persisted claim")).unwrap();
+            repo.consent(Consent {
+                memory_id: "mem-persist".into(),
+                actor: "human".into(),
+                state: ConsentGrant::ApproveMemory,
+                timestamp: "2026-01-01T00:00:00Z".into(),
+            })
+            .unwrap();
+        }
+        // Reopen in a fresh instance (simulates the CLI reading what the
+        // service persisted, or a restart) and confirm the entry survives.
+        let repo = FileReviewMemory::open(&path).unwrap();
+        let entries = repo.list(None).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].memory_id, "mem-persist");
+        assert_eq!(entries[0].approval_state, ApprovalState::MemoryApproved);
+        // And it is retrievable as context.
+        let found = repo
+            .retrieve(&ReviewMemorySearch {
+                query: "persisted claim".into(),
+                limit: 10,
+            })
+            .unwrap();
+        assert_eq!(found.len(), 1);
     }
 }

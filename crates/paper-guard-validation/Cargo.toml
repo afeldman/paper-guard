@@ -1,0 +1,17 @@
+[package]
+name = "paper-guard-validation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Text and visual validation after re-rendering for Paper Guard."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+paper-guard-core.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }
+paper-guard-renderer = { workspace = true }
+paper-guard-parser = { workspace = true }

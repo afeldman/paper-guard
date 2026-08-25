@@ -1,0 +1,17 @@
+[package]
+name = "paper-guard-agents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Revision engine for Paper Guard (constrained, auditable edits)."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+regex.workspace = true
+chrono.workspace = true
+anyhow.workspace = true
+paper-guard-core.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }

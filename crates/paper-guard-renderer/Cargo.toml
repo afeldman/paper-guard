@@ -1,0 +1,13 @@
+[package]
+name = "paper-guard-renderer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Rendering orchestration for Paper Guard (parse -> render -> artifacts)."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+paper-guard-core.workspace = true
+paper-guard-parser.workspace = true

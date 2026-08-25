@@ -1,0 +1,17 @@
+[package]
+name = "paper-guard-parser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Parser abstraction and LaTeX parser for Paper Guard."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+regex.workspace = true
+async-trait.workspace = true
+anyhow.workspace = true
+paper-guard-core.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }

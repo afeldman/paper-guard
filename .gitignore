@@ -1,0 +1,10 @@
+# Rust build artifacts
+/target
+**/*.rs.bk
+
+# Paper Guard run artifacts (regenerable)
+/.paper-guard
+*.paper-guard
+
+# Editor/OS files
+.DS_Store

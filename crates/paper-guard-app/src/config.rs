@@ -1,4 +1,8 @@
 //! Configuration (paper-guard.toml).
+//!
+//! This is the shared application-layer configuration consumed by both the
+//! standalone CLI and the HTTP service. It lives here (not in the CLI binary)
+//! so that both entry points drive the same pipeline from the same config.
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -16,6 +20,8 @@ pub struct AppConfig {
     pub judge: JudgeConfig,
     pub revision: RevisionConfig,
     pub reproducibility: ReproducibilityConfig,
+    pub service: ServiceConfig,
+    pub memory: MemoryConfig,
 }
 
 /// Top-level LLM provider selection.
@@ -49,10 +55,10 @@ pub struct ProvidersConfig {
 /// The `[providers.openai-compatible]` section.
 ///
 /// This is the single production backend connecting to any OpenAI-compatible
-/// endpoint (OpenAI, Mammoth.ai, a local server, etc.). The difference between
-/// backends is *configuration only* — never code. Secrets (the API key) are
-/// never stored here; only the name of the environment variable that holds
-/// them.
+/// endpoint (OpenAI, Mammoth.ai, a local server such as Ollama's OpenAI-
+/// compatible `/v1`, etc.). The difference between backends is *configuration
+/// only* — never code. Secrets (the API key) are never stored here; only the
+/// name of the environment variable that holds them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct OpenAICompatibleSectionConfig {
@@ -60,7 +66,7 @@ pub struct OpenAICompatibleSectionConfig {
     pub base_url: String,
     /// Environment variable holding the API key, e.g. `OPENAI_API_KEY`.
     /// When absent, requests are sent without an Authorization header (for
-    /// local endpoints that need no key).
+    /// local endpoints such as Ollama that need no key).
     #[serde(default)]
     pub api_key_env: Option<String>,
     /// Model name (configuration-driven, never hard-coded).
@@ -89,6 +95,71 @@ impl Default for OpenAICompatibleSectionConfig {
     }
 }
 
+/// The `[service]` section — the optional HTTP service mode.
+///
+/// Service mode runs the *same* application pipeline as the CLI over HTTP. The
+/// service is local-only by default and exposes no destructive endpoints in
+/// M3; authentication/authorization is explicitly out of scope and documented.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ServiceConfig {
+    /// The bind address for the HTTP server, e.g. `127.0.0.1:8080`.
+    pub bind: String,
+    /// Whether the service may bind to a non-loopback (network) address.
+    /// Defaults to `false`: the service refuses to start on anything other
+    /// than loopback unless this is explicitly set, so it cannot silently
+    /// expose an unauthenticated interface to the network.
+    pub allow_external_bind: bool,
+    /// Directory where service-run artifacts (ledger, manuscripts, memory)
+    /// are persisted.
+    pub data_dir: String,
+}
+
+impl Default for ServiceConfig {
+    fn default() -> Self {
+        ServiceConfig {
+            bind: "127.0.0.1:8080".into(),
+            allow_external_bind: false,
+            data_dir: ".paper-guard".into(),
+        }
+    }
+}
+
+/// The `[memory]` section — Review Memory (retrieval-based, not training).
+///
+/// Review Memory stores *human-approved* review units that may later be used
+/// as retrieval context for a local reviewer. It is separate from the LLM
+/// provider and never becomes current-paper evidence. The default approval
+/// state is `PRIVATE`, so nothing is ever used for training unless explicitly
+/// approved.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MemoryConfig {
+    /// Backend: `none` (off, default for standalone), `file` (offline JSON
+    /// store), or `qdrant` (vector backend, service mode).
+    pub backend: String,
+    /// Qdrant endpoint (e.g. `http://localhost:6333`). Only used when
+    /// `backend = "qdrant"`.
+    pub qdrant_url: String,
+    /// Qdrant collection name for review memory.
+    pub collection: String,
+    /// Whether a memory entry requires explicit human approval before it is
+    /// eligible to be retrieved as context (MEMORY_APPROVED) or exported to
+    /// a training dataset (TRAINING_APPROVED). Defaults to true: nothing is
+    /// eligible without explicit consent.
+    pub require_approval: bool,
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        MemoryConfig {
+            backend: "none".into(),
+            qdrant_url: "http://localhost:6333".into(),
+            collection: "review_memory".into(),
+            require_approval: true,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -241,6 +312,12 @@ impl AppConfig {
     pub fn canonical_json(&self) -> String {
         serde_json::to_string(self).unwrap_or_default()
     }
+
+    /// The data directory to use for this configuration. Standalone mode uses
+    /// `reproducibility.data_dir`; service mode uses `service.data_dir`.
+    pub fn effective_data_dir(&self) -> &str {
+        &self.reproducibility.data_dir
+    }
 }
 
 #[cfg(test)]
@@ -255,6 +332,10 @@ mod tests {
         assert!(cfg.judge.require_human_approval_for_major);
         // The default provider is mock (offline / deterministic by default).
         assert_eq!(cfg.llm.provider, "mock");
+        // The service is local-only and memory is off by default.
+        assert_eq!(cfg.service.bind, "127.0.0.1:8080");
+        assert!(!cfg.service.allow_external_bind);
+        assert_eq!(cfg.memory.backend, "none");
     }
 
     #[test]

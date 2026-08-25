@@ -1,4 +1,8 @@
-//! End-to-end run orchestration for the CLI.
+//! End-to-end run orchestration — the shared application pipeline.
+//!
+//! This is the single application layer used by *both* the standalone CLI and
+//! the HTTP service. Neither entry point re-implements review logic; they both
+//! call [`run_pipeline`] with a parsed source and a [`crate::config::AppConfig`].
 
 use std::sync::Arc;
 
@@ -26,7 +30,7 @@ pub struct RunOutput {
 }
 
 /// Read a source file's bytes.
-fn read_source(path: &str) -> anyhow::Result<Vec<u8>> {
+pub fn read_source(path: &str) -> anyhow::Result<Vec<u8>> {
     Ok(std::fs::read(path)?)
 }
 
@@ -47,11 +51,13 @@ fn resolve_format(path: &str, config: &AppConfig) -> SourceFormat {
 /// * `openai-compatible` => the real [`paper_guard_llm::OpenAICompatibleProvider`]
 ///   pointed at the configured endpoint (`[providers.openai-compatible]`). The
 ///   API key comes from the configured environment variable, never from the
-///   committed config.
+///   committed config. This is the same path used for OpenAI, Mammoth.ai, a
+///   local server, and Ollama's OpenAI-compatible `/v1` endpoint — they differ
+///   only by configuration.
 ///
 /// Any other provider kind is rejected with a clear configuration error rather
 /// than silently falling back to the mock.
-fn build_provider(config: &AppConfig, fixture_response: Option<&str>) -> anyhow::Result<Arc<dyn paper_guard_llm::LlmProvider>> {
+pub fn build_provider(config: &AppConfig, fixture_response: Option<&str>) -> anyhow::Result<Arc<dyn paper_guard_llm::LlmProvider>> {
     match config.llm.provider.as_str() {
         "mock" => {
             Ok(build_mock_provider(config, fixture_response))
@@ -167,12 +173,7 @@ pub async fn run_pipeline(
     let reviewers = enabled_reviewers(config);
     logging::log_review_start(&run_id, "pipeline", "review");
     let runner = ReviewRunner::new(config.reviewers.max_concurrent);
-    let agent_results = if config.reviewers.parallel {
-        runner.run(&ctx, reviewers, provider).await
-    } else {
-        // Sequential still uses the same per-agent path via the runner.
-        runner.run(&ctx, reviewers, provider).await
-    };
+    let agent_results = runner.run(&ctx, reviewers, provider).await;
 
     for res in &agent_results {
         let status = match res.status {
@@ -359,7 +360,7 @@ fn apply_changes(source: &str, outcome: &RevisionOutcome) -> String {
 }
 
 /// Build the enabled reviewer set from configuration.
-fn enabled_reviewers(config: &AppConfig) -> Vec<Box<dyn Reviewer>> {
+pub fn enabled_reviewers(config: &AppConfig) -> Vec<Box<dyn Reviewer>> {
     let mut out: Vec<Box<dyn Reviewer>> = Vec::new();
     let mk = |_kind: ReviewerKind, cfg: &crate::config::ReviewerSectionConfig| {
         ReviewerSettings {
@@ -399,7 +400,7 @@ fn enabled_reviewers(config: &AppConfig) -> Vec<Box<dyn Reviewer>> {
 }
 
 /// Determine the next run id.
-fn next_run_id(ledger: &LedgerStore) -> anyhow::Result<String> {
+pub fn next_run_id(ledger: &LedgerStore) -> anyhow::Result<String> {
     let runs = ledger.list_runs()?;
     let max = runs
         .iter()
@@ -426,7 +427,7 @@ impl HasModel for crate::config::JudgeConfig {
 }
 
 /// The configured model for a given reviewer kind (used for usage metadata).
-fn model_for_agent(config: &AppConfig, kind: ReviewerKind) -> String {
+pub fn model_for_agent(config: &AppConfig, kind: ReviewerKind) -> String {
     let cfg: &dyn HasModel = match kind {
         ReviewerKind::Scientific => &config.reviewers.scientific,
         ReviewerKind::Adversarial => &config.reviewers.adversarial,
@@ -439,7 +440,7 @@ fn model_for_agent(config: &AppConfig, kind: ReviewerKind) -> String {
 }
 
 /// Persist JSON artifacts (claims, findings, judge, revisions, validation).
-fn persist_artifacts(
+pub fn persist_artifacts(
     data_dir: &str,
     run_id: &str,
     doc: &Document,
@@ -479,6 +480,25 @@ fn persist_artifacts(
 }
 
 /// Current ISO-8601 UTC timestamp.
-fn now_iso() -> String {
+pub fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339()
+}
+
+/// Build a review runner + context + provider for a service submission (used by
+/// the HTTP API). This isolates the "start a review" step so the service and
+/// CLI share the same construction path.
+#[allow(dead_code)]
+pub(crate) fn review_runner_for_config(
+    config: &AppConfig,
+    document: Document,
+    run_id: String,
+) -> anyhow::Result<(ReviewRunner, ReviewerContext, Arc<dyn paper_guard_llm::LlmProvider>)> {
+    let provider = build_provider(config, None)?;
+    let ctx = ReviewerContext {
+        document,
+        prompt_version: config.prompt_version().to_string(),
+        run_id,
+    };
+    let runner = ReviewRunner::new(config.reviewers.max_concurrent);
+    Ok((runner, ctx, provider))
 }

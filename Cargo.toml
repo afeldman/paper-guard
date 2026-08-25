@@ -9,6 +9,7 @@ members = [
     "crates/paper-guard-agents",
     "crates/paper-guard-ledger",
     "crates/paper-guard-validation",
+    "crates/paper-guard-app",
     "crates/paper-guard-cli",
 ]
 
@@ -51,3 +52,4 @@ paper-guard-review = { path = "crates/paper-guard-review" }
 paper-guard-agents = { path = "crates/paper-guard-agents" }
 paper-guard-ledger = { path = "crates/paper-guard-ledger" }
 paper-guard-validation = { path = "crates/paper-guard-validation" }
+paper-guard-app = { path = "crates/paper-guard-app" }

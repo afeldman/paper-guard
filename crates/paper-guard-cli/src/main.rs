@@ -2,13 +2,10 @@
 //!
 //! A reproducible, multi-agent scientific review and revision workflow.
 
-mod config;
-mod logging;
-mod run;
-
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use paper_guard_cli::{config, logging, run};
 use config::AppConfig;
 use logging::init_logging;
 

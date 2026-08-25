@@ -2,7 +2,7 @@
 //!
 //! Logs carry `run_id`, `agent`, `stage`, and other structured fields where
 //! relevant. Parallel agent runs remain attributable because each log line is
-//! json-structured.
+//! json-structured. Secrets are never logged.
 
 use rust_loguru::formatters::Formatter;
 use rust_loguru::handler::console::ConsoleHandler;

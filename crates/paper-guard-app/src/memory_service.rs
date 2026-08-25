@@ -159,6 +159,12 @@ impl MemoryService {
     pub fn state_of(&self, memory_id: &str) -> anyhow::Result<Option<ApprovalState>> {
         Ok(self.repo.load(memory_id)?.map(|e| e.approval_state))
     }
+
+    /// List stored units (optionally filtered by approval state). Used by the
+    /// CLI/service for audit and human decision-making.
+    pub fn list(&self, state: Option<ApprovalState>) -> anyhow::Result<Vec<ReviewMemoryEntry>> {
+        self.repo.list(state)
+    }
 }
 
 /// A no-op memory backend (default `backend = "none"`). Stores nothing and

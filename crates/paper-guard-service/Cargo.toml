@@ -1,0 +1,22 @@
+[package]
+name = "paper-guard-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Optional HTTP service mode for Paper Guard, sharing the application layer with the CLI."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+chrono.workspace = true
+axum.workspace = true
+tower.workspace = true
+paper-guard-core.workspace = true
+paper-guard-app.workspace = true
+paper-guard-ledger.workspace = true
+paper-guard-review.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

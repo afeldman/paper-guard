@@ -71,3 +71,25 @@ output_dir = ".paper-guard"
 seed = 42
 prompt_version = "v1"
 data_dir = ".paper-guard"
+
+# --- Service mode ----------------------------------------------------------
+# Optional HTTP service. Runs the SAME application layer as the CLI. By default
+# it binds to loopback only; set allow_external_bind = true (plus your own
+# auth/firewall) before exposing it to a network. No destructive endpoints.
+[service]
+bind = "127.0.0.1:8080"
+allow_external_bind = false
+data_dir = ".paper-guard"
+
+# --- Review Memory ---------------------------------------------------------
+# Retrieval-based learning, NOT training. Default `backend = "none"` (off).
+# Every unit starts PRIVATE and only becomes retrievable/exportable through
+# explicit human consent — a paper is never used for anything beyond its own
+# review automatically. `file` is an offline JSON store; `qdrant` is the
+# optional vector backend (service mode). Qdrant must be configured and is
+# never required for standalone.
+[memory]
+backend = "none"
+qdrant_url = "http://localhost:6333"
+collection = "review_memory"
+require_approval = true

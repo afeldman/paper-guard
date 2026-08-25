@@ -2,7 +2,7 @@
 //!
 //! A reproducible, multi-agent scientific review and revision workflow.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 use paper_guard_cli::{config, logging, run};
@@ -84,6 +84,56 @@ enum Command {
         run: Option<String>,
         #[arg(long)]
         config: Option<String>,
+    },
+    /// Start the Paper Guard HTTP service (uses the same application layer as
+    /// the CLI).
+    Serve {
+        /// Path to a `paper-guard.toml` (optional).
+        #[arg(long, default_value = "paper-guard.toml")]
+        config: String,
+        /// Override the bind address (e.g. `127.0.0.1:8080`).
+        #[arg(long)]
+        bind: Option<String>,
+    },
+    /// Print service health (if the service is running on the configured bind).
+    Health {
+        /// Path to a `paper-guard.toml` (optional).
+        #[arg(long)]
+        config: Option<String>,
+    },
+    /// Interact with Review Memory (retrieval-approved units only).
+    Memory {
+        /// Sub-command.
+        #[command(subcommand)]
+        command: MemoryCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum MemoryCommand {
+    /// List memory units and their approval state.
+    List {
+        #[arg(long)]
+        config: Option<String>,
+    },
+    /// Approve a unit for use as retrieval context.
+    ApproveMemory {
+        /// The memory id.
+        memory_id: String,
+        #[arg(long)]
+        config: Option<String>,
+        /// Actor/name of the approving human (never a secret).
+        #[arg(long, default_value = "cli-user")]
+        actor: String,
+    },
+    /// Approve a unit for export to a (versioned, human-approved) training set.
+    ApproveTraining {
+        /// The memory id.
+        memory_id: String,
+        #[arg(long)]
+        config: Option<String>,
+        #[arg(long, default_value = "cli-user")]
+        actor: String,
     },
 }
 
@@ -191,8 +241,99 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
+        Command::Serve { config, bind } => {
+            let cfg = AppConfig::load(Some(Path::new(&config)))?;
+            let data_dir = cfg.service.data_dir.clone();
+            let addr = bind.unwrap_or_else(|| cfg.service.bind.clone());
+            let enforce_loopback = !cfg.service.allow_external_bind;
+            let state = paper_guard_service::AppState {
+                config: std::sync::Arc::new(cfg),
+                data_dir,
+                enforce_loopback,
+            };
+            println!("paper-guard serve listening on {addr}");
+            paper_guard_service::serve(&addr, state).await?;
+        }
+        Command::Health { config } => {
+            let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+            // Health is answered by the running service; if we are here from the
+            // CLI without a server, print the configured endpoint for tooling.
+            println!(
+                "service configured at http://{}/health (provider={}, memory={})",
+                cfg.service.bind,
+                cfg.llm.provider,
+                cfg.memory.backend
+            );
+        }
+        Command::Memory { command } => match command {
+            MemoryCommand::List { config } => {
+                let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+                // List uses the shared memory store for the configured data dir.
+                let mem = paper_guard_app::memory_service::MemoryService::new(
+                    &cfg.memory.backend,
+                    &cfg.reproducibility.data_dir,
+                    &cfg.memory.qdrant_url,
+                    &cfg.memory.collection,
+                )?;
+                let entries = mem.list(None)?;
+                if entries.is_empty() {
+                    println!("no review-memory units recorded");
+                }
+                for e in &entries {
+                    println!(
+                        "{} | {} | {} | {}",
+                        e.memory_id,
+                        e.approval_state.describe(),
+                        e.unit.kind.as_str(),
+                        snippet(&e.unit.text)
+                    );
+                }
+            }
+            MemoryCommand::ApproveMemory {
+                memory_id,
+                config,
+                actor,
+            } => {
+                let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+                let mem = paper_guard_app::memory_service::MemoryService::new(
+                    &cfg.memory.backend,
+                    &cfg.reproducibility.data_dir,
+                    &cfg.memory.qdrant_url,
+                    &cfg.memory.collection,
+                )?;
+                mem.approve_memory(&memory_id, &actor)?;
+                println!("approved {memory_id} for retrieval-context use (actor={actor})");
+            }
+            MemoryCommand::ApproveTraining {
+                memory_id,
+                config,
+                actor,
+            } => {
+                let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+                let mem = paper_guard_app::memory_service::MemoryService::new(
+                    &cfg.memory.backend,
+                    &cfg.reproducibility.data_dir,
+                    &cfg.memory.qdrant_url,
+                    &cfg.memory.collection,
+                )?;
+                mem.approve_training(&memory_id, &actor)?;
+                println!("approved {memory_id} for training-dataset export (actor={actor})");
+            }
+        },
     }
     Ok(())
+}
+
+/// A short excerpt of a text for listing (never dumps full papers).
+fn snippet(s: &str) -> String {
+    let collapsed: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut chars = collapsed.chars();
+    let out: String = chars.by_ref().take(60).collect();
+    if chars.next().is_some() {
+        format!("{out}…")
+    } else {
+        out
+    }
 }
 
 /// A deterministic fixture response is only used for LaTeX sources so that a

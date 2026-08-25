@@ -5,12 +5,16 @@
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
-use paper_guard_cli::{config, logging, run};
 use config::AppConfig;
 use logging::init_logging;
+use paper_guard_cli::{config, logging, run};
 
 #[derive(Parser)]
-#[command(name = "paper-guard", about = "Reproducible multi-agent scientific review workflow", version)]
+#[command(
+    name = "paper-guard",
+    about = "Reproducible multi-agent scientific review workflow",
+    version
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -31,6 +35,10 @@ enum Command {
         /// Path to a `paper-guard.toml` (optional).
         #[arg(long)]
         config: Option<String>,
+        /// Run the review on a remote Paper Guard service instead of locally.
+        /// Takes precedence over any `[server].url` in the config.
+        #[arg(long)]
+        server: Option<String>,
         /// Non-interactively approve all required revisions.
         #[arg(long)]
         approve_all: bool,
@@ -42,8 +50,32 @@ enum Command {
         /// Path to a `paper-guard.toml` (optional).
         #[arg(long)]
         config: Option<String>,
+        /// Run the full workflow on a remote Paper Guard service instead of
+        /// locally. Takes precedence over any `[server].url` in the config.
+        #[arg(long)]
+        server: Option<String>,
         #[arg(long)]
         approve_all: bool,
+    },
+    /// Record a human decision (accept/reject/modified) on a review finding.
+    /// The decision is stored as a private Review Memory candidate.
+    Feedback {
+        /// Run id that contains the finding.
+        run: String,
+        /// The finding id to record a decision on.
+        finding_id: String,
+        /// The human decision: accept, reject, or modified.
+        #[arg(long)]
+        decision: String,
+        /// Optional free-text human feedback.
+        #[arg(long)]
+        feedback: Option<String>,
+        /// Path to a `paper-guard.toml` (optional).
+        #[arg(long)]
+        config: Option<String>,
+        /// Record the feedback on a remote service instead of locally.
+        #[arg(long)]
+        server: Option<String>,
     },
     /// List accepted findings.
     Findings {
@@ -100,6 +132,10 @@ enum Command {
         /// Path to a `paper-guard.toml` (optional).
         #[arg(long)]
         config: Option<String>,
+        /// Query a remote service's health instead of the configured endpoint.
+        /// Takes precedence over any `[server].url` in the config.
+        #[arg(long)]
+        server: Option<String>,
     },
     /// Interact with Review Memory (retrieval-approved units only).
     Memory {
@@ -149,26 +185,42 @@ async fn main() -> anyhow::Result<()> {
         Command::Review {
             source,
             config,
+            server,
             approve_all,
         } => {
             let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
-            let data_dir = cfg.reproducibility.data_dir.clone();
-            let fixture = fixture_response_for(&source);
-            let out = run::run_pipeline(&source, &cfg, &data_dir, fixture.as_deref(), approve_all)
-                .await?;
-            print_summary(&out);
+            if let Some(server_url) = resolve_server_url(&cfg, server.as_deref()) {
+                let client = build_remote_client(&cfg, &server_url)?;
+                run_remote_review(&client, &server_url, &source).await?;
+            } else {
+                print_mode_local(&cfg);
+                let data_dir = cfg.reproducibility.data_dir.clone();
+                let fixture = fixture_response_for(&source);
+                let out =
+                    run::run_pipeline(&source, &cfg, &data_dir, fixture.as_deref(), approve_all)
+                        .await?;
+                print_summary(&out);
+            }
         }
         Command::Run {
             source,
             config,
+            server,
             approve_all,
         } => {
             let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
-            let data_dir = cfg.reproducibility.data_dir.clone();
-            let fixture = fixture_response_for(&source);
-            let out = run::run_pipeline(&source, &cfg, &data_dir, fixture.as_deref(), approve_all)
-                .await?;
-            print_summary(&out);
+            if let Some(server_url) = resolve_server_url(&cfg, server.as_deref()) {
+                let client = build_remote_client(&cfg, &server_url)?;
+                run_remote_review(&client, &server_url, &source).await?;
+            } else {
+                print_mode_local(&cfg);
+                let data_dir = cfg.reproducibility.data_dir.clone();
+                let fixture = fixture_response_for(&source);
+                let out =
+                    run::run_pipeline(&source, &cfg, &data_dir, fixture.as_deref(), approve_all)
+                        .await?;
+                print_summary(&out);
+            }
         }
         Command::Findings { config } => {
             let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
@@ -184,7 +236,10 @@ async fn main() -> anyhow::Result<()> {
             let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
             let ledger = paper_guard_ledger::LedgerStore::open(&cfg.reproducibility.data_dir)?;
             let record = ledger.load_run(&run)?;
-            println!("run {run}: {} revisions recorded", record.revision_results.len());
+            println!(
+                "run {run}: {} revisions recorded",
+                record.revision_results.len()
+            );
         }
         Command::Validate { run, config } => {
             let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
@@ -192,7 +247,11 @@ async fn main() -> anyhow::Result<()> {
             let record = ledger.load_run(&run)?;
             let validations = &record.validation_results;
             let passed = validations.iter().all(|v| v.passed);
-            println!("run {run}: validation {} ({} checks)", if passed { "PASSED" } else { "FAILED" }, validations.len());
+            println!(
+                "run {run}: validation {} ({} checks)",
+                if passed { "PASSED" } else { "FAILED" },
+                validations.len()
+            );
             for v in validations {
                 for i in &v.issues {
                     println!("  - [{}] {}", v.stage, i);
@@ -211,9 +270,14 @@ async fn main() -> anyhow::Result<()> {
             }
             for id in runs {
                 if let Ok(r) = ledger.load_run(&id) {
-                    println!("{} | {:?} | source={} | findings={} | revisions={}",
-                        id, r.status, r.source_format,
-                        r.findings.len(), r.revision_results.len());
+                    println!(
+                        "{} | {:?} | source={} | findings={} | revisions={}",
+                        id,
+                        r.status,
+                        r.source_format,
+                        r.findings.len(),
+                        r.revision_results.len()
+                    );
                 }
             }
         }
@@ -232,15 +296,43 @@ async fn main() -> anyhow::Result<()> {
             println!("- status: {:?}", record.status);
             println!("- input hash: {}", record.input_hash);
             println!("- findings opened: {}", record.findings.len());
-            let open = record.findings.iter().filter(|f| f.status.describe() == "OPEN").count();
+            let open = record
+                .findings
+                .iter()
+                .filter(|f| f.status.describe() == "OPEN")
+                .count();
             println!("- open findings: {open}");
             println!("- revisions applied: {}", record.revision_results.len());
             for f in &record.findings {
                 if f.status.describe() == "OPEN" {
-                    println!("  - [{} {}] {} @ {}", f.severity.priority(), f.finding_id, f.finding, f.location);
+                    println!(
+                        "  - [{} {}] {} @ {}",
+                        f.severity.priority(),
+                        f.finding_id,
+                        f.finding,
+                        f.location
+                    );
                 }
             }
         }
+        Command::Feedback {
+            run,
+            finding_id,
+            decision,
+            feedback,
+            config,
+            server,
+        } => {
+            let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+            if let Some(server_url) = resolve_server_url(&cfg, server.as_deref()) {
+                let client = build_remote_client(&cfg, &server_url)?;
+                send_remote_feedback(&client, &run, &finding_id, &decision, feedback.as_deref())
+                    .await?;
+            } else {
+                record_local_feedback(&cfg, &run, &finding_id, &decision, feedback.as_deref())?;
+            }
+        }
+
         Command::Serve { config, bind } => {
             let cfg = AppConfig::load(Some(Path::new(&config)))?;
             let data_dir = cfg.service.data_dir.clone();
@@ -261,16 +353,24 @@ async fn main() -> anyhow::Result<()> {
             println!("paper-guard serve listening on {addr}");
             paper_guard_service::serve(&addr, state).await?;
         }
-        Command::Health { config } => {
+        Command::Health { config, server } => {
             let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
-            // Health is answered by the running service; if we are here from the
-            // CLI without a server, print the configured endpoint for tooling.
-            println!(
-                "service configured at http://{}/health (provider={}, memory={})",
-                cfg.service.bind,
-                cfg.llm.provider,
-                cfg.memory.backend
-            );
+            if let Some(server_url) = resolve_server_url(&cfg, server.as_deref()) {
+                let client = build_remote_client(&cfg, &server_url)?;
+                let h = client.health().await?;
+                println!("Paper Guard Service");
+                println!("Status: {}", h.status);
+                println!("Version: {}", h.version);
+                println!("Provider: {}", h.provider);
+                println!("Memory backend: {}", h.memory_backend);
+            } else {
+                // Health is answered by the running local service; if we are
+                // here without a server, print the configured endpoint.
+                println!(
+                    "service configured at http://{}/health (provider={}, memory={})",
+                    cfg.service.bind, cfg.llm.provider, cfg.memory.backend
+                );
+            }
         }
         Command::Memory { command } => match command {
             MemoryCommand::List { config } => {
@@ -328,6 +428,173 @@ async fn main() -> anyhow::Result<()> {
             }
         },
     }
+    Ok(())
+}
+// ---------------------------------------------------------------------------
+// Local vs remote mode helpers
+// ---------------------------------------------------------------------------
+
+/// Resolve which mode to run. An explicit `--server` flag always wins; a
+/// configured `[server].url` is second; otherwise we run locally. We never
+/// switch modes implicitly from environment variables.
+fn resolve_server_url(cfg: &AppConfig, explicit: Option<&str>) -> Option<String> {
+    explicit
+        .map(|s| s.to_string())
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            let u = cfg.server.url.trim().to_string();
+            if u.is_empty() {
+                None
+            } else {
+                Some(u)
+            }
+        })
+}
+
+/// Build a remote client from the resolved server URL and the `[server]`
+/// configuration (auth env, timeout). The token (if any) is read from the
+/// environment at construction and never printed.
+fn build_remote_client(
+    cfg: &AppConfig,
+    server_url: &str,
+) -> anyhow::Result<paper_guard_client::PaperGuardClient> {
+    let ccfg = paper_guard_client::ClientConfig {
+        base_url: server_url.to_string(),
+        timeout: std::time::Duration::from_secs(cfg.server.timeout_seconds.max(1)),
+        auth_token_env: cfg.server.auth_token_env.clone(),
+    };
+    Ok(paper_guard_client::PaperGuardClient::new(&ccfg)?)
+}
+
+/// Print the local-mode banner (never secrets, only provider + model).
+fn print_mode_local(cfg: &AppConfig) {
+    let (provider, model) = match cfg.llm.provider.as_str() {
+        "openai-compatible" => (
+            "OpenAI-compatible",
+            cfg.providers.openai_compatible.model.clone(),
+        ),
+        other => (other, String::new()),
+    };
+    println!("Mode: local");
+    println!("Provider: {provider}");
+    if !model.is_empty() {
+        println!("Model: {model}");
+    }
+}
+
+/// Print the remote-mode banner.
+fn print_mode_remote(server_url: &str) {
+    println!("Mode: remote");
+    println!("Server: {server_url}");
+}
+
+/// Run a review remotely: submit the manuscript, then fetch status + findings.
+async fn run_remote_review(
+    client: &paper_guard_client::PaperGuardClient,
+    server_url: &str,
+    source: &str,
+) -> anyhow::Result<()> {
+    print_mode_remote(server_url);
+    println!("Reviewing {source} on remote service…");
+    let submission = client.submit_review(source).await?;
+    let run_id = submission.run_id.clone();
+    println!("Review submitted.");
+    println!("Run: {run_id}");
+    let review = client.review(&run_id).await?;
+    println!("Remote review completed.");
+    println!(
+        "  findings opened: {} ({} open)",
+        review.findings_opened, review.open_count
+    );
+    println!("  judge entries:  {}", review.judge_entries);
+    println!("  revisions applied: {}", review.revisions_applied);
+    for f in &review.findings {
+        println!(
+            "  - [{} {}] {} @ {}",
+            f.severity, f.finding_id, f.finding, f.location
+        );
+    }
+    Ok(())
+}
+
+/// Send a human decision to a remote service, resolving the finding from the
+/// run's findings so the request is fully populated.
+async fn send_remote_feedback(
+    client: &paper_guard_client::PaperGuardClient,
+    run: &str,
+    finding_id: &str,
+    decision: &str,
+    feedback: Option<&str>,
+) -> anyhow::Result<()> {
+    let findings = client.get_findings(run).await?;
+    let finding = findings
+        .findings
+        .iter()
+        .find(|f| f.finding_id == finding_id)
+        .ok_or_else(|| anyhow::anyhow!("finding {finding_id} not found in run {run}"))?;
+    let req = paper_guard_client::SubmitFeedbackRequest {
+        reviewer_kind: finding.reviewer.clone(),
+        unit_text: finding.finding.clone(),
+        unit_kind: Some("claim".into()),
+        finding_text: Some(finding.finding.clone()),
+        decision: decision.to_string(),
+        feedback: feedback.map(|s| s.to_string()),
+    };
+    let resp = client.submit_feedback(run, &req).await?;
+    println!(
+        "Feedback recorded (memory_id={}, approval_state={})",
+        resp.memory_id, resp.approval_state
+    );
+    Ok(())
+}
+
+/// Record a human decision in the local Review Memory store.
+fn record_local_feedback(
+    cfg: &AppConfig,
+    run: &str,
+    finding_id: &str,
+    decision: &str,
+    feedback: Option<&str>,
+) -> anyhow::Result<()> {
+    let mem = paper_guard_app::MemoryService::new(
+        &cfg.memory.backend,
+        &cfg.reproducibility.data_dir,
+        &cfg.memory.qdrant_url,
+        &cfg.memory.collection,
+    )?;
+    let ledger = paper_guard_ledger::LedgerStore::open(&cfg.reproducibility.data_dir)?;
+    let record = ledger.load_run(run)?;
+    let finding = record
+        .findings
+        .iter()
+        .find(|f| f.finding_id == finding_id)
+        .ok_or_else(|| anyhow::anyhow!("finding {finding_id} not found in run {run}"))?;
+    let unit = paper_guard_app::ReviewMemoryUnit {
+        reviewer_kind: finding.reviewer.clone(),
+        kind: paper_guard_app::MemoryKind::Claim,
+        text: finding.finding.clone(),
+        finding: finding.finding.clone(),
+        context: String::new(),
+    };
+    let resolution = match decision {
+        "accept" => paper_guard_app::MemoryResolution::Accept,
+        "reject" => paper_guard_app::MemoryResolution::Reject,
+        "modified" => paper_guard_app::MemoryResolution::Modified,
+        other => {
+            anyhow::bail!("invalid decision `{other}`; expected accept|reject|modified")
+        }
+    };
+    let fb = paper_guard_app::FindingFeedback {
+        finding_id: finding_id.to_string(),
+        decision: resolution,
+        feedback: feedback.unwrap_or_default().to_string(),
+    };
+    let entry = mem.record_feedback(run, unit, &fb, "cli-human-feedback")?;
+    println!(
+        "Feedback recorded (memory_id={}, approval_state={})",
+        entry.memory_id,
+        entry.approval_state.describe()
+    );
     Ok(())
 }
 

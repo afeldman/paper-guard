@@ -62,8 +62,17 @@ pub struct HealthResponse {
 /// Request body for `POST /reviews`.
 #[derive(Debug, serde::Deserialize)]
 pub struct SubmitReviewRequest {
-    /// Path to the manuscript to review (e.g. a `.tex` file).
+    /// Path to the manuscript to review (e.g. a `.tex` file). When
+    /// `content_base64` is also provided, this acts as the source filename
+    /// used to resolve the manuscript format, and the uploaded bytes are
+    /// written to a managed file under the data directory.
     pub source: String,
+    /// Optional base64-encoded manuscript bytes for a remote upload. When
+    /// present, the service reviews the uploaded content rather than a
+    /// server-side path, so a client on another host can submit locally-held
+    /// manuscripts without a shared filesystem.
+    #[serde(default)]
+    pub content_base64: Option<String>,
 }
 
 /// Response for `POST /reviews` (accepted / started).
@@ -203,7 +212,7 @@ async fn submit_review(
     State(state): State<AppState>,
     Json(req): Json<SubmitReviewRequest>,
 ) -> Result<(StatusCode, Json<ReviewSubmissionResponse>), (StatusCode, Json<serde_json::Value>)> {
-    let placeholder = run_review_request(&state, &req.source).await;
+    let placeholder = run_review_request(&state, &req).await;
     match placeholder {
         Ok(out) => Ok((
             StatusCode::OK,
@@ -227,8 +236,7 @@ async fn review_status(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
 ) -> Result<Json<ReviewStatusResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let ledger = LedgerStore::open(&state.data_dir)
-        .map_err(|e| api_err(&e.to_string()))?;
+    let ledger = LedgerStore::open(&state.data_dir).map_err(|e| api_err(&e.to_string()))?;
     let run = ledger
         .load_run(&run_id)
         .map_err(|_| api_err(&format!("run {run_id} not found")))?;
@@ -240,8 +248,7 @@ async fn review_findings(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
 ) -> Result<Json<FindingsResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let ledger = LedgerStore::open(&state.data_dir)
-        .map_err(|e| api_err(&e.to_string()))?;
+    let ledger = LedgerStore::open(&state.data_dir).map_err(|e| api_err(&e.to_string()))?;
     let run = ledger
         .load_run(&run_id)
         .map_err(|_| api_err(&format!("run {run_id} not found")))?;
@@ -250,7 +257,11 @@ async fn review_findings(
         .iter()
         .map(record_to_payload)
         .collect::<Vec<_>>();
-    let open_count = run.findings.iter().filter(|f| f.status.describe() == "OPEN").count();
+    let open_count = run
+        .findings
+        .iter()
+        .filter(|f| f.status.describe() == "OPEN")
+        .count();
     Ok(Json(FindingsResponse {
         run_id,
         findings,
@@ -274,7 +285,9 @@ async fn submit_feedback(
         other => {
             return Err((
                 StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": format!("invalid decision `{other}`; expected accept|reject|modified") })),
+                Json(
+                    serde_json::json!({ "error": format!("invalid decision `{other}`; expected accept|reject|modified") }),
+                ),
             ))
         }
     };
@@ -340,14 +353,42 @@ fn record_to_payload(f: &paper_guard_ledger::FindingRecord) -> FindingPayload {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Resolve the manuscript source for a request: write uploaded content to a
+/// managed file under the data directory (never under the client), then pass
+/// a readable path to the shared pipeline. This is the single path both the
+/// CLI and the service call.
+async fn resolve_source_path(
+    state: &AppState,
+    req: &SubmitReviewRequest,
+) -> Result<String, String> {
+    let Some(content_base64) = req.content_base64.as_deref() else {
+        // Backward-compatible contract: `source` is a server-side path.
+        return Ok(req.source.clone());
+    };
+    let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, content_base64)
+        .map_err(|e| format!("invalid base64 manuscript content: {e}"))?;
+    let manuscripts_dir = std::path::Path::new(&state.data_dir).join("manuscripts");
+    std::fs::create_dir_all(&manuscripts_dir)
+        .map_err(|e| format!("could not create manuscripts dir: {e}"))?;
+    let file_name = std::path::Path::new(&req.source)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "upload.tex".into());
+    let dest = manuscripts_dir.join(file_name);
+    std::fs::write(&dest, &bytes)
+        .map_err(|e| format!("could not persist uploaded manuscript: {e}"))?;
+    Ok(dest.to_string_lossy().into_owned())
+}
+
 /// Run the shared pipeline for a submitted manuscript. This is the single path
 /// both the CLI and the service call.
 async fn run_review_request(
     state: &AppState,
-    source: &str,
+    req: &SubmitReviewRequest,
 ) -> Result<paper_guard_app::RunOutput, String> {
+    let source = resolve_source_path(state, req).await?;
     paper_guard_app::pipeline::run_pipeline(
-        source,
+        &source,
         &state.config,
         &state.data_dir,
         None,
@@ -383,7 +424,10 @@ fn to_status_dto(run: &RunRecord) -> ReviewStatusResponse {
 }
 
 fn api_err(message: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": message })))
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({ "error": message })),
+    )
 }
 
 #[cfg(test)]
@@ -429,7 +473,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let body: HealthResponse = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body.status, "ok");
         assert_eq!(body.service, "paper-guard");
@@ -487,7 +533,9 @@ We show that the method reduces latency. INSUFFICIENT_EVIDENCE
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let submission: ReviewSubmissionResponse = serde_json::from_slice(&bytes).unwrap();
         assert!(submission.run_id.starts_with("run-"));
         assert_eq!(submission.status, "completed");
@@ -515,6 +563,63 @@ We show that the method reduces latency. INSUFFICIENT_EVIDENCE
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn submit_review_accepts_uploaded_content() {
+        // A remote client sends base64 manuscript bytes (no shared filesystem).
+        // The service writes them to a managed file and runs the same pipeline.
+        let (state, _dir) = test_state();
+        let content = r#"\documentclass{article}
+\begin{document}
+A claim with INSUFFICIENT_EVIDENCE.
+\end{document}"#;
+        let encoded = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            content.as_bytes(),
+        );
+        let submit_body = serde_json::json!({
+            "source": "upload.tex",
+            "content_base64": encoded,
+        });
+        let resp = app(state)
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/reviews")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(submit_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let submission: ReviewSubmissionResponse = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(submission.status, "completed");
+    }
+
+    #[tokio::test]
+    async fn submit_review_rejects_invalid_base64() {
+        let (state, _dir) = test_state();
+        let submit_body = serde_json::json!({
+            "source": "upload.tex",
+            "content_base64": "!!!not valid base64!!!",
+        });
+        let resp = app(state)
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/reviews")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(submit_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[test]
@@ -551,13 +656,18 @@ We show that the method reduces latency. INSUFFICIENT_EVIDENCE
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let fb: FeedbackResponse = serde_json::from_slice(&bytes).unwrap();
         assert!(fb.memory_id.starts_with("mem-"));
         assert_eq!(fb.approval_state, "private");
 
         // Without consent, the unit is not retrievable as context.
-        let ctx = state.memory.retrieve_context("the method reduces latency", 10).unwrap();
+        let ctx = state
+            .memory
+            .retrieve_context("the method reduces latency", 10)
+            .unwrap();
         assert!(ctx.is_empty());
     }
 

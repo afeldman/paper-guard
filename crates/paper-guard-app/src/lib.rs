@@ -18,7 +18,7 @@ pub mod logging;
 pub mod memory;
 pub mod pipeline;
 
-pub use config::AppConfig;
+pub use config::{AppConfig, ServerConfig};
 pub use memory::{
     ApprovalState, Consent, ConsentGrant, FileReviewMemory, MemoryKind, MemoryResolution,
     QdrantReviewMemory, ReviewMemoryEntry, ReviewMemoryRepository, ReviewMemorySearch,

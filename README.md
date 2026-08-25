@@ -115,8 +115,9 @@ paper-guard revise  <run> [--config PATH]
 paper-guard validate <run> [--config PATH]
 paper-guard ledger  [--config PATH]
 paper-guard report  [<run>] [--config PATH]
+paper-guard feedback <run> <finding-id> --decision {accept|reject|modified} [--feedback TEXT]
 paper-guard serve   [--config PATH] [--bind ADDR]        # optional HTTP service
-paper-guard health  [--config PATH]
+paper-guard health  [--config PATH] [--server URL]       # query a remote service
 paper-guard memory list               # list review-memory units + approval state
 paper-guard memory approve-memory <id> [--actor NAME]
 paper-guard memory approve-training <id> [--actor NAME]
@@ -427,6 +428,7 @@ paper-guard/
 │   ├── paper-guard-ledger/
 │   ├── paper-guard-app/     # shared application layer (config, pipeline, memory)
 │   ├── paper-guard-service/ # optional HTTP service mode
+│   ├── paper-guard-client/  # HTTP client for a remote service (transport only)
 │   └── paper-guard-cli/
 └── tests/
 ```

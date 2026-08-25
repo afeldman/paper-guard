@@ -32,6 +32,7 @@ The system is split into focused crates so that no layer depends on the rest:
 | `paper-guard-ledger` | Persistent review ledger and run tracking.                 |
 | `paper-guard-app`    | **Shared application layer**: config, pipeline orchestration, review memory. Used by both the CLI and the HTTP service. |
 | `paper-guard-service`| **Optional HTTP service mode**: minimal REST API over the shared application layer. |
+| `paper-guard-client` | **HTTP client for a remote service** (M3.5). Transport only; maps wire DTOs onto the same domain representations. Never instantiates the pipeline. |
 | `paper-guard-cli`    | Command-line interface (thin shell over `paper-guard-app`). |
 
 ### 2.1b Standalone vs Service
@@ -57,8 +58,53 @@ offline with the `MockProvider`, and can use any OpenAI-compatible endpoint
 `POST /reviews/{id}/feedback`) that calls the same pipeline. It binds to
 loopback by default and refuses unauthenticated external exposure unless
 explicitly enabled (M3 §9); authentication/authorization is documented as
-out of scope. Persistence for artifacts/ledger is filesystem-backed and
+Persistence for artifacts/ledger is filesystem-backed and
 survives restarts via the Helm PVC.
+
+### 2.1c Local vs remote (client) mode
+
+The `paper-guard` binary is both a standalone application and a client for a
+remotely-deployed service. The same binary supports either mode without
+changing the scientific review architecture:
+
+```text
+                    paper-guard binary
+                           │
+                 ┌─────────┴─────────┐
+                 │                   │
+             Local Mode         Remote Mode
+                 │                   │
+                 ▼                   ▼
+          local app layer      paper-guard-client (HTTP only)
+                 │                   │
+                 │                   ▼
+                 │            Paper Guard Service
+                 │                   │
+                 └─────────┬─────────┘
+                           ▼
+                      Review Result
+```
+
+**Mode resolution** (M3.5 §6): an explicit `--server` flag always wins; a
+configured `[server].url` is next; otherwise execution is local. The CLI never
+switches to remote implicitly from an environment variable. The selected mode
+is always reported (e.g. `Mode: remote / Server: http://…`).
+
+**Same domain results** (M3.5 §7): local and remote execution map onto the same
+application-level representation (`RunOutput`, `FindingPayload`, `RunStatus`).
+`paper-guard-client` exposes typed methods (`health`, `submit_review`,
+`get_review`, `get_findings`, `submit_feedback`) and a typed error taxonomy
+(connection, timeout, HTTP, auth, invalid response, server-side review failure,
+serialization) so the CLI never receives generic string errors (M3.5 §8).
+
+**Remote ledger** (M3.5 §13): the server is authoritative for a remote run. The
+client uploads the manuscript content (base64 `content_base64`) and never
+writes a second local ledger entry pretending it executed the review.
+
+**Security** (M3.5 §15–16): production deployments should use HTTPS (the
+reverse proxy/ingress terminates TLS). The client resolves a bearer token from
+the configured `auth_token_env` at request time and never stores or logs it;
+manuscript content is never cached or logged.
 
 ### 2.2 Canonical Paper Model (in `paper-guard-core`)
 
@@ -335,6 +381,17 @@ M3 adds:
   `MEMORY_APPROVED` retrieval, `TRAINING_APPROVED` export, that private/rejected
   units are never retrievable as context, and that retrieved memory is always
   framed as `HISTORICAL REVIEW MEMORY` (never current-paper evidence).
+- **Client tests** (`paper-guard-client/tests/client.rs`): verify the typed
+  methods against a mocked wiremock service — health, submit, status, findings,
+  feedback — plus the error taxonomy (connection refused, timeout, 400/401/403/
+  404/409/429/500/503, malformed JSON), mode resolution, and security invariants
+  (tokens are sent but never logged/serialized; manuscript content never leaks).
+- **Service upload tests** (`paper-guard-service`): `POST /reviews` accepts
+  base64 `content_base64` uploads and writes them to a managed server dir.
+- **Optional end-to-end integration test** (`paper-guard-client/tests/service_integration.rs`,
+  #ignored, enable with `PAPER_GUARD_SERVICE_TESTS=1`): starts the real service
+  and drives it via the actual client with `MockProvider`, verifying the full
+  `client → HTTP → service → app → review → ledger → HTTP → client` lifecycle.
 
 The default `cargo test --workspace` requires **no** external service (no
 OpenAI/Mammoth.ai/Ollama/Qdrant/Kubernetes/internet); all integrations are

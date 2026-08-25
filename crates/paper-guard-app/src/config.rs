@@ -22,6 +22,7 @@ pub struct AppConfig {
     pub reproducibility: ReproducibilityConfig,
     pub service: ServiceConfig,
     pub memory: MemoryConfig,
+    pub server: ServerConfig,
 }
 
 /// Top-level LLM provider selection.
@@ -161,6 +162,44 @@ impl Default for MemoryConfig {
     }
 }
 
+/// The `[server]` section — optional connection to a remote Paper Guard
+/// service (M3.5). When `url` is set, `paper-guard review/run` executes the
+/// manuscript on the remote service instead of locally. The service is
+/// authoritative for a remote run; the CLI never writes its own ledger entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ServerConfig {
+    /// Base URL of the remote Paper Guard service, e.g.
+    /// `http://localhost:8080`. Empty means "local mode" unless an explicit
+    /// `--server` flag overrides it on the command line.
+    #[serde(default)]
+    pub url: String,
+    /// Name of an environment variable holding a bearer/API token to send to
+    /// the service. Never stores the token itself; the value is read from the
+    /// environment at runtime and never logged.
+    #[serde(default)]
+    pub auth_token_env: Option<String>,
+    /// Request timeout in seconds for remote calls.
+    #[serde(default = "default_server_timeout")]
+    pub timeout_seconds: u64,
+}
+
+/// Default remote request timeout (120s) — long enough for a mock or real
+/// review pipeline to complete.
+fn default_server_timeout() -> u64 {
+    120
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        ServerConfig {
+            url: String::new(),
+            auth_token_env: None,
+            timeout_seconds: default_server_timeout(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProjectConfig {
@@ -182,7 +221,6 @@ pub struct InputConfig {
     /// Explicit format override (pdf, latex, typst, docx).
     pub format: Option<String>,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -336,6 +374,35 @@ mod tests {
         assert_eq!(cfg.service.bind, "127.0.0.1:8080");
         assert!(!cfg.service.allow_external_bind);
         assert_eq!(cfg.memory.backend, "none");
+    }
+
+    #[test]
+    fn server_config_defaults_to_local_mode() {
+        let cfg = AppConfig::default();
+        // No server URL => local mode by default.
+        assert_eq!(cfg.server.url, "");
+        assert!(cfg.server.auth_token_env.is_none());
+        assert_eq!(cfg.server.timeout_seconds, 120);
+    }
+
+    #[test]
+    fn server_config_roundtrips_and_never_embeds_token() {
+        let src = r#"
+[server]
+url = "http://localhost:8080"
+auth_token_env = "PAPER_GUARD_TOKEN"
+timeout_seconds = 60
+"#;
+        let cfg: AppConfig = toml::from_str(src).unwrap();
+        assert_eq!(cfg.server.url, "http://localhost:8080");
+        assert_eq!(
+            cfg.server.auth_token_env.as_deref(),
+            Some("PAPER_GUARD_TOKEN")
+        );
+        assert_eq!(cfg.server.timeout_seconds, 60);
+        // The token itself is never part of the config; only the env name is.
+        let dumped = serde_json::to_string(&cfg).unwrap();
+        assert!(!dumped.contains("super-secret-token"));
     }
 
     #[test]

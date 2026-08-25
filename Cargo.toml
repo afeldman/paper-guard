@@ -11,11 +11,12 @@ members = [
     "crates/paper-guard-validation",
     "crates/paper-guard-app",
     "crates/paper-guard-service",
+    "crates/paper-guard-client",
     "crates/paper-guard-cli",
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.4.0"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["Paper Guard Contributors"]
@@ -45,6 +46,7 @@ reqwest = { version = "0.13", features = ["json", "rustls", "rustls-native-certs
 wiremock = "0.6"
 axum = "0.7"
 tower = "0.5"
+base64 = "0.22"
 
 # --- Internal crates ---
 paper-guard-core = { path = "crates/paper-guard-core" }
@@ -57,3 +59,5 @@ paper-guard-ledger = { path = "crates/paper-guard-ledger" }
 paper-guard-validation = { path = "crates/paper-guard-validation" }
 paper-guard-app = { path = "crates/paper-guard-app" }
 paper-guard-service = { path = "crates/paper-guard-service" }
+paper-guard-client = { path = "crates/paper-guard-client" }
+

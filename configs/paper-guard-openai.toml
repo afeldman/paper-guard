@@ -83,3 +83,11 @@ backend = "none"
 qdrant_url = "http://localhost:6333"
 collection = "review_memory"
 require_approval = true
+
+# --- Remote service mode (optional) ----------------------------------------
+# Empty `url` => local/standalone mode. Set it to a deployed service to run
+# reviews remotely. The auth token lives in the named env var at runtime.
+[server]
+url = ""
+auth_token_env = "PAPER_GUARD_TOKEN"
+timeout_seconds = 120

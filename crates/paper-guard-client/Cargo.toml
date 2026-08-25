@@ -1,23 +1,25 @@
 [package]
-name = "paper-guard-service"
+name = "paper-guard-client"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Optional HTTP service mode for Paper Guard, sharing the application layer with the CLI."
+description = "HTTP client for a remote Paper Guard service. Transport only; the domain model lives in the app/core crates."
 
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+async-trait.workspace = true
 anyhow.workspace = true
 tokio.workspace = true
 chrono.workspace = true
-axum.workspace = true
-tower.workspace = true
+reqwest.workspace = true
 base64.workspace = true
+thiserror.workspace = true
 paper-guard-core.workspace = true
 paper-guard-app.workspace = true
-paper-guard-ledger.workspace = true
 paper-guard-review.workspace = true
 
 [dev-dependencies]
+wiremock = { workspace = true }
 tempfile = "3"
+paper-guard-service = { workspace = true }

@@ -93,3 +93,14 @@ backend = "none"
 qdrant_url = "http://localhost:6333"
 collection = "review_memory"
 require_approval = true
+
+# --- Remote service mode (M3.5) -------------------------------------------
+# Optional connection to a centrally-deployed Paper Guard service. When
+# `url` is set, `paper-guard review/run` executes the manuscript on that
+# service instead of locally (the service is authoritative for the remote
+# run). Leave `url` empty for standalone/local mode. The auth token is read
+# from the named environment variable at runtime and is NEVER stored here.
+[server]
+url = ""
+auth_token_env = "PAPER_GUARD_TOKEN"
+timeout_seconds = 120

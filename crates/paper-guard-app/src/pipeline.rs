@@ -13,7 +13,7 @@ use paper_guard_ledger::{
 };
 use paper_guard_parser::{format_from_extension, parser_for_format, SourceFormat};
 use paper_guard_review::{
-    collect_findings, AgentStatus, Judge, Reviewer, ReviewerContext, ReviewerKind, ReviewRunner,
+    collect_findings, AgentStatus, Judge, ReviewRunner, Reviewer, ReviewerContext, ReviewerKind,
     ReviewerSettings,
 };
 use paper_guard_validation::TextValidator;
@@ -57,11 +57,12 @@ fn resolve_format(path: &str, config: &AppConfig) -> SourceFormat {
 ///
 /// Any other provider kind is rejected with a clear configuration error rather
 /// than silently falling back to the mock.
-pub fn build_provider(config: &AppConfig, fixture_response: Option<&str>) -> anyhow::Result<Arc<dyn paper_guard_llm::LlmProvider>> {
+pub fn build_provider(
+    config: &AppConfig,
+    fixture_response: Option<&str>,
+) -> anyhow::Result<Arc<dyn paper_guard_llm::LlmProvider>> {
     match config.llm.provider.as_str() {
-        "mock" => {
-            Ok(build_mock_provider(config, fixture_response))
-        }
+        "mock" => Ok(build_mock_provider(config, fixture_response)),
         "openai-compatible" => {
             let sec = &config.providers.openai_compatible;
             let capabilities = paper_guard_llm::ProviderCapabilities {
@@ -164,10 +165,14 @@ pub async fn run_pipeline(
 
     // --- Review stage (parallel) ---
     let provider = build_provider(config, fixture_response)?;
+    // Retrieve authorized historical review memory as untrusted reviewer
+    // context (only when memory is enabled in a retrieving mode).
+    let memory_context = retrieve_memory_context(config, data_dir, &document);
     let ctx = ReviewerContext {
         document: document.clone(),
         prompt_version: config.prompt_version().to_string(),
         run_id: run_id.clone(),
+        memory_context,
     };
 
     let reviewers = enabled_reviewers(config);
@@ -184,16 +189,16 @@ pub async fn run_pipeline(
         let count = res.output.as_ref().map(|o| o.findings.len()).unwrap_or(0);
         // Provider usage metadata (token accounting) when the provider reported
         // it. Never holds secrets — only token counts + provider/model names.
-        let provider_usage = res
-            .output
-            .as_ref()
-            .and_then(|o| o.usage)
-            .map(|u| paper_guard_ledger::ProviderUsage {
-                provider: config.llm.provider.clone(),
-                model: model_for_agent(config, res.agent),
-                input_tokens: u.prompt_tokens,
-                output_tokens: u.completion_tokens,
-            });
+        let provider_usage =
+            res.output
+                .as_ref()
+                .and_then(|o| o.usage)
+                .map(|u| paper_guard_ledger::ProviderUsage {
+                    provider: config.llm.provider.clone(),
+                    model: model_for_agent(config, res.agent),
+                    input_tokens: u.prompt_tokens,
+                    output_tokens: u.completion_tokens,
+                });
         run.reviewer_results.push(AgentOutcome {
             agent: res.agent.name().to_string(),
             status: status.to_string(),
@@ -289,7 +294,8 @@ pub async fn run_pipeline(
         if outcome.applied {
             // Apply the deterministic change to the source representation.
             current_source = apply_changes(&current_source, &outcome);
-            run.revision_results.push(outcome.revision.revision_id.0.clone());
+            run.revision_results
+                .push(outcome.revision.revision_id.0.clone());
         }
         outcomes.push(outcome);
     }
@@ -362,14 +368,12 @@ fn apply_changes(source: &str, outcome: &RevisionOutcome) -> String {
 /// Build the enabled reviewer set from configuration.
 pub fn enabled_reviewers(config: &AppConfig) -> Vec<Box<dyn Reviewer>> {
     let mut out: Vec<Box<dyn Reviewer>> = Vec::new();
-    let mk = |_kind: ReviewerKind, cfg: &crate::config::ReviewerSectionConfig| {
-        ReviewerSettings {
-            enabled: cfg.enabled,
-            provider: cfg.provider.clone(),
-            model: cfg.model.clone(),
-            seed: cfg.seed,
-            temperature: 0.0,
-        }
+    let mk = |_kind: ReviewerKind, cfg: &crate::config::ReviewerSectionConfig| ReviewerSettings {
+        enabled: cfg.enabled,
+        provider: cfg.provider.clone(),
+        model: cfg.model.clone(),
+        seed: cfg.seed,
+        temperature: 0.0,
     };
     if config.reviewers.scientific.enabled {
         out.push(Box::new(paper_guard_review::ScientificReviewer {
@@ -474,7 +478,10 @@ pub fn persist_artifacts(
         "schema_version": SCHEMA_VERSION,
         "run_id": run_id,
     });
-    std::fs::write(dir.join("schema.json"), serde_json::to_string_pretty(&manifest)?)?;
+    std::fs::write(
+        dir.join("schema.json"),
+        serde_json::to_string_pretty(&manifest)?,
+    )?;
 
     Ok(())
 }
@@ -492,13 +499,95 @@ pub(crate) fn review_runner_for_config(
     config: &AppConfig,
     document: Document,
     run_id: String,
-) -> anyhow::Result<(ReviewRunner, ReviewerContext, Arc<dyn paper_guard_llm::LlmProvider>)> {
+) -> anyhow::Result<(
+    ReviewRunner,
+    ReviewerContext,
+    Arc<dyn paper_guard_llm::LlmProvider>,
+)> {
     let provider = build_provider(config, None)?;
     let ctx = ReviewerContext {
         document,
         prompt_version: config.prompt_version().to_string(),
         run_id,
+        memory_context: String::new(),
     };
     let runner = ReviewRunner::new(config.reviewers.max_concurrent);
     Ok((runner, ctx, provider))
+}
+
+/// Retrieve authorized historical review memory relevant to the current
+/// manuscript and render it as an untrusted memory-context block for reviewers.
+///
+/// Only units the configured owner/team is authorized to access AND that are
+/// `MEMORY_APPROVED`/`TRAINING_APPROVED` are ever included. When memory is
+/// disabled, or in a non-retrieving mode, or nothing matches, this returns an
+/// empty string so behaviour is identical to a memory-free review (never
+/// fabricates memory). A retrieval failure surfaces as `MEMORY_UNAVAILABLE`
+/// (logged) and the review continues without memory; it never invents context.
+///
+/// This is synchronous (driven by `block_on`) so the pipeline's future remains
+/// `Send`: the memory retrieval future is never held across an `.await` in the
+/// pipeline review stage.
+fn retrieve_memory_context(config: &AppConfig, data_dir: &str, document: &Document) -> String {
+    let mem_cfg = &config.memory;
+    if !mem_cfg.enabled {
+        return String::new();
+    }
+    // Use the pipeline's data dir so memory lives alongside the run's ledger
+    // (the CLI and service both pass the same dir used to persist artifacts).
+    let mut opts = crate::memory_service::MemoryServiceOptions::from_config(config);
+    opts.data_dir = data_dir.to_string();
+    let Ok(memory) = crate::MemoryService::new(&opts) else {
+        logging::log_memory_unavailable();
+        return String::new();
+    };
+    if !memory.retrieves() {
+        return String::new();
+    }
+    // Build the retrieval query from the current manuscript's claims (the
+    // review experience most relevant to this paper). Never embed the whole
+    // paper; a claim + category is enough.
+    let query = if document.claims.is_empty() {
+        document
+            .meta
+            .title
+            .clone()
+            .unwrap_or_else(|| "scientific review".to_string())
+    } else {
+        document
+            .claims
+            .first()
+            .map(|c| c.text.clone())
+            .unwrap_or_else(|| "scientific review".to_string())
+    };
+
+    futures::executor::block_on(async {
+        match memory
+            .retrieve_context(&query, None, None, None, None)
+            .await
+        {
+            Ok(entries) if !entries.is_empty() => {
+                let briefs: Vec<paper_guard_review::MemoryBrief> = entries
+                    .into_iter()
+                    .take(mem_cfg.top_k.max(1))
+                    .map(|e| {
+                        paper_guard_review::MemoryBrief::new(
+                            e.unit.category,
+                            e.unit.finding,
+                            e.resolution.as_str().to_string(),
+                            e.human_feedback,
+                        )
+                    })
+                    .collect();
+                logging::log_memory_retrieval(briefs.len());
+                paper_guard_review::render_memory_context(&briefs)
+            }
+            _ => {
+                // Retrieval returned nothing OR failed. We continue without
+                // fabricated context; the availability is surfaced in the log.
+                logging::log_memory_unavailable();
+                String::new()
+            }
+        }
+    })
 }

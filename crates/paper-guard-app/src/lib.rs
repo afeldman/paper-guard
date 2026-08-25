@@ -18,9 +18,11 @@ pub mod logging;
 pub mod memory;
 pub mod pipeline;
 
-pub use config::{AppConfig, ServerConfig};
+pub use config::{AppConfig, MemoryMode, ServerConfig};
 pub use memory::{
-    ApprovalState, Consent, ConsentGrant, FileReviewMemory, MemoryKind, MemoryResolution,
+    cosine_similarity, try_cosine, ApprovalState, Consent, ConsentGrant, EmbeddingProvider,
+    EmbeddingProviderConfig, FileReviewMemory, MemoryAuthzContext, MemoryHit, MemoryKind,
+    MemoryResolution, MemoryScope, MockEmbeddingProvider, OpenAICompatibleEmbeddingProvider,
     QdrantReviewMemory, ReviewMemoryEntry, ReviewMemoryRepository, ReviewMemorySearch,
     ReviewMemoryUnit,
 };

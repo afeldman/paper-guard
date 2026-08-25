@@ -152,6 +152,13 @@ enum MemoryCommand {
         #[arg(long)]
         config: Option<String>,
     },
+    /// Show the full detail of a single memory unit.
+    Show {
+        /// The memory id.
+        memory_id: String,
+        #[arg(long)]
+        config: Option<String>,
+    },
     /// Approve a unit for use as retrieval context.
     ApproveMemory {
         /// The memory id.
@@ -170,6 +177,23 @@ enum MemoryCommand {
         config: Option<String>,
         #[arg(long, default_value = "cli-user")]
         actor: String,
+    },
+    /// Reject a unit (explicit human rejection). It is removed from retrieval
+    /// and export eligibility.
+    Reject {
+        /// The memory id.
+        memory_id: String,
+        #[arg(long)]
+        config: Option<String>,
+        #[arg(long, default_value = "cli-user")]
+        actor: String,
+    },
+    /// Semantic search over approved review memory.
+    Search {
+        /// A natural-language query (e.g. "unsupported causal claim").
+        query: String,
+        #[arg(long)]
+        config: Option<String>,
     },
 }
 
@@ -329,7 +353,8 @@ async fn main() -> anyhow::Result<()> {
                 send_remote_feedback(&client, &run, &finding_id, &decision, feedback.as_deref())
                     .await?;
             } else {
-                record_local_feedback(&cfg, &run, &finding_id, &decision, feedback.as_deref())?;
+                record_local_feedback(&cfg, &run, &finding_id, &decision, feedback.as_deref())
+                    .await?;
             }
         }
 
@@ -338,12 +363,7 @@ async fn main() -> anyhow::Result<()> {
             let data_dir = cfg.service.data_dir.clone();
             let addr = bind.unwrap_or_else(|| cfg.service.bind.clone());
             let enforce_loopback = !cfg.service.allow_external_bind;
-            let memory = paper_guard_app::MemoryService::new(
-                &cfg.memory.backend,
-                &data_dir,
-                &cfg.memory.qdrant_url,
-                &cfg.memory.collection,
-            )?;
+            let memory = paper_guard_app::MemoryService::from_config(&cfg)?;
             let state = paper_guard_service::AppState {
                 config: std::sync::Arc::new(cfg),
                 data_dir,
@@ -375,26 +395,58 @@ async fn main() -> anyhow::Result<()> {
         Command::Memory { command } => match command {
             MemoryCommand::List { config } => {
                 let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
-                // List uses the shared memory store for the configured data dir.
-                let mem = paper_guard_app::memory_service::MemoryService::new(
-                    &cfg.memory.backend,
-                    &cfg.reproducibility.data_dir,
-                    &cfg.memory.qdrant_url,
-                    &cfg.memory.collection,
-                )?;
+                let mem = paper_guard_app::MemoryService::from_config(&cfg)?;
                 let entries = mem.list(None)?;
                 if entries.is_empty() {
                     println!("no review-memory units recorded");
                 }
                 for e in &entries {
                     println!(
-                        "{} | {} | {} | {}",
+                        "{} | {} ({}) | {} | {}",
                         e.memory_id,
                         e.approval_state.describe(),
+                        e.scope.describe(),
                         e.unit.kind.as_str(),
                         snippet(&e.unit.text)
                     );
                 }
+            }
+            MemoryCommand::Show { memory_id, config } => {
+                let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+                let mem = paper_guard_app::MemoryService::from_config(&cfg)?;
+                let Some(e) = mem.load(&memory_id)? else {
+                    anyhow::bail!("memory unit {memory_id} not found");
+                };
+                println!("memory id:    {}", e.memory_id);
+                println!("schema:       {}", e.schema_version);
+                println!("source run:   {}", e.source_run_id);
+                println!("finding id:   {}", e.source_finding_id);
+                println!("reviewer:     {}", e.unit.reviewer_kind);
+                println!("kind:         {}", e.unit.kind.as_str());
+                println!("category:     {}", e.unit.category);
+                println!(
+                    "scope:        {} (owner={}{})",
+                    e.scope.describe(),
+                    if e.owner_id.is_empty() {
+                        "-"
+                    } else {
+                        &e.owner_id
+                    },
+                    if e.team_id.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" team={}", e.team_id)
+                    }
+                );
+                println!("approval:     {}", e.approval_state.describe());
+                println!("decision:     {}", e.resolution.as_str());
+                println!("claim ctx:    {}", e.unit.claim_context);
+                println!("evidence ctx: {}", e.unit.evidence_context);
+                println!("finding:      {}", e.unit.finding);
+                if !e.human_feedback.is_empty() {
+                    println!("human fb:     {}", e.human_feedback);
+                }
+                println!("created:      {}", e.created_at);
             }
             MemoryCommand::ApproveMemory {
                 memory_id,
@@ -402,13 +454,8 @@ async fn main() -> anyhow::Result<()> {
                 actor,
             } => {
                 let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
-                let mem = paper_guard_app::memory_service::MemoryService::new(
-                    &cfg.memory.backend,
-                    &cfg.reproducibility.data_dir,
-                    &cfg.memory.qdrant_url,
-                    &cfg.memory.collection,
-                )?;
-                mem.approve_memory(&memory_id, &actor)?;
+                let mem = paper_guard_app::MemoryService::from_config(&cfg)?;
+                mem.approve_memory(&memory_id, &actor).await?;
                 println!("approved {memory_id} for retrieval-context use (actor={actor})");
             }
             MemoryCommand::ApproveTraining {
@@ -417,14 +464,37 @@ async fn main() -> anyhow::Result<()> {
                 actor,
             } => {
                 let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
-                let mem = paper_guard_app::memory_service::MemoryService::new(
-                    &cfg.memory.backend,
-                    &cfg.reproducibility.data_dir,
-                    &cfg.memory.qdrant_url,
-                    &cfg.memory.collection,
-                )?;
-                mem.approve_training(&memory_id, &actor)?;
+                let mem = paper_guard_app::MemoryService::from_config(&cfg)?;
+                mem.approve_training(&memory_id, &actor).await?;
                 println!("approved {memory_id} for training-dataset export (actor={actor})");
+            }
+            MemoryCommand::Reject {
+                memory_id,
+                config,
+                actor,
+            } => {
+                let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+                let mem = paper_guard_app::MemoryService::from_config(&cfg)?;
+                mem.reject_memory(&memory_id, &actor).await?;
+                println!("rejected {memory_id} (actor={actor})");
+            }
+            MemoryCommand::Search { query, config } => {
+                let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+                let mem = paper_guard_app::MemoryService::from_config(&cfg)?;
+                let hits = mem.search(&query, None, None).await?;
+                if hits.is_empty() {
+                    println!("no approved review memory matched");
+                }
+                for h in &hits {
+                    println!(
+                        "{} | {} ({}) | sim={:.2} | {}",
+                        h.entry.memory_id,
+                        h.entry.approval_state.describe(),
+                        h.entry.scope.describe(),
+                        h.similarity,
+                        snippet(&h.entry.unit.finding)
+                    );
+                }
             }
         },
     }
@@ -537,6 +607,9 @@ async fn send_remote_feedback(
         unit_text: finding.finding.clone(),
         unit_kind: Some("claim".into()),
         finding_text: Some(finding.finding.clone()),
+        claim_context: finding.claim_id.as_ref().map(|c| c.to_string()),
+        evidence_context: Some(finding.evidence.clone().join("; ")).filter(|s| !s.is_empty()),
+        category: Some(finding.category.clone()),
         decision: decision.to_string(),
         feedback: feedback.map(|s| s.to_string()),
     };
@@ -549,19 +622,14 @@ async fn send_remote_feedback(
 }
 
 /// Record a human decision in the local Review Memory store.
-fn record_local_feedback(
+async fn record_local_feedback(
     cfg: &AppConfig,
     run: &str,
     finding_id: &str,
     decision: &str,
     feedback: Option<&str>,
 ) -> anyhow::Result<()> {
-    let mem = paper_guard_app::MemoryService::new(
-        &cfg.memory.backend,
-        &cfg.reproducibility.data_dir,
-        &cfg.memory.qdrant_url,
-        &cfg.memory.collection,
-    )?;
+    let mem = paper_guard_app::MemoryService::from_config(cfg)?;
     let ledger = paper_guard_ledger::LedgerStore::open(&cfg.reproducibility.data_dir)?;
     let record = ledger.load_run(run)?;
     let finding = record
@@ -575,6 +643,13 @@ fn record_local_feedback(
         text: finding.finding.clone(),
         finding: finding.finding.clone(),
         context: String::new(),
+        claim_context: finding
+            .claim_id
+            .as_ref()
+            .map(|c| c.to_string())
+            .unwrap_or_default(),
+        evidence_context: finding.evidence.join("; "),
+        category: finding.category.clone(),
     };
     let resolution = match decision {
         "accept" => paper_guard_app::MemoryResolution::Accept,
@@ -589,12 +664,19 @@ fn record_local_feedback(
         decision: resolution,
         feedback: feedback.unwrap_or_default().to_string(),
     };
-    let entry = mem.record_feedback(run, unit, &fb, "cli-human-feedback")?;
-    println!(
-        "Feedback recorded (memory_id={}, approval_state={})",
-        entry.memory_id,
-        entry.approval_state.describe()
-    );
+    match mem
+        .record_feedback(run, finding_id, unit, &fb, "cli-human-feedback")
+        .await?
+    {
+        Some(entry) => println!(
+            "Feedback recorded (memory_id={}, approval_state={})",
+            entry.memory_id,
+            entry.approval_state.describe()
+        ),
+        None => println!(
+            "Feedback accepted; review memory is disabled or in read-only mode, no memory candidate stored"
+        ),
+    }
     Ok(())
 }
 

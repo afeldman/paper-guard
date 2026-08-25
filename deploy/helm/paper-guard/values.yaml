@@ -59,6 +59,26 @@ qdrant:
   # -- Qdrant collection for review memory
   collection: review_memory
 
+memory:
+  # -- Whether Review Memory is enabled. Default false: existing runs are
+  # unchanged. Set true to enable retrieval-based learning.
+  enabled: false
+  # -- Memory access mode: off | read_only | write | read_write.
+  mode: off
+  # -- Max retrieved memory entries per review.
+  topK: 5
+  # -- Minimum cosine similarity threshold (0..1) for retrieval.
+  minSimilarity: 0.75
+  # -- Embedding provider: mock (offline) or openai-compatible (incl. Ollama
+  # /v1 embeddings endpoint). Never hard-coded.
+  embeddingProvider: mock
+  # -- Embedding model name (used by openai-compatible). Configurable.
+  embeddingModel: mock
+  # -- Optional owner identity attributed to locally-recorded memory.
+  ownerId: ""
+  # -- Optional team id for sharing approved memory across a team.
+  teamId: ""
+
 persistence:
   # -- enable a persistent volume for ledger/manuscript/memory artifacts
   enabled: true

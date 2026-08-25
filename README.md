@@ -119,8 +119,11 @@ paper-guard feedback <run> <finding-id> --decision {accept|reject|modified} [--f
 paper-guard serve   [--config PATH] [--bind ADDR]        # optional HTTP service
 paper-guard health  [--config PATH] [--server URL]       # query a remote service
 paper-guard memory list               # list review-memory units + approval state
+paper-guard memory show <id>          # show full detail of one unit
 paper-guard memory approve-memory <id> [--actor NAME]
 paper-guard memory approve-training <id> [--actor NAME]
+paper-guard memory reject <id> [--actor NAME]
+paper-guard memory search "unsupported causal claim"   # semantic search
 ```
 
 Run the complete workflow with `paper-guard run manuscript/`.
@@ -140,6 +143,10 @@ POST /reviews                       → run the shared review pipeline
 GET  /reviews/{run_id}              → review status/result
 GET  /reviews/{run_id}/findings     → review findings
 POST /reviews/{run_id}/feedback     → record human ACCEPT/REJECT/MODIFY
+GET  /memory                        → list memory units + approval state
+GET  /memory/{id}                   → fetch a memory unit
+POST /memory/{id}/approve           → explicit approval (→ retrievable context)
+POST /memory/{id}/reject            → explicit rejection
 ```
 
 ```bash
@@ -262,32 +269,76 @@ See `configs/paper-guard.toml` (deterministic/mock) and
 
 ## Review Memory & Qdrant
 
-Review Memory is the M3 foundation for retrieval-based learning. A human
-reviewer records `ACCEPT` / `REJECT` / `MODIFY` on an AI finding (service
-`POST /reviews/{id}/feedback` or CLI `memory` commands). Each unit is stored
+> **Review Memory is retrieval-based contextual learning. It does not modify
+> model weights.**
+
+A human reviewer records `ACCEPT` / `REJECT` / `MODIFY` on an AI finding
+(service `POST /reviews/{id}/feedback` or CLI `feedback`). Each unit is stored
 **private by default** and only becomes retrievable as context
 (`MEMORY_APPROVED`) or exportable to a versioned training dataset
-(`TRAINING_APPROVED`) through explicit, audited consent. **A paper is never used
-for anything beyond its own review automatically** — nothing is submitted for
-training merely because it was reviewed.
+(`TRAINING_APPROVED`) through explicit, audited consent. **A paper is never
+used for anything beyond its own review automatically** — nothing is submitted
+for training merely because it was reviewed. Paper Guard does not implement
+LoRA / QLoRA / fine-tuning / weight updates (those are future milestones).
+
+M4 turns this into a **team review-memory system**: approved human-validated
+review experience can be embedded, stored, retrieved by semantic similarity,
+and injected into a future review as *untrusted guidance only*.
 
 ```toml
 [memory]
-backend = "none"                 # standalone default: memory off
-# backend = "qdrant"             # service mode vector backend (optional)
-# qdrant_url = "http://localhost:6333"
-# collection = "review_memory"
+backend = "none"                 # standalone default: memory off (file | qdrant)
+qdrant_url = "http://localhost:6333"
+collection = "review_memory"
 require_approval = true          # nothing is promoted without explicit consent
+enabled = false                  # M4: disabled by default, so runs are unchanged
+mode = "off"                     # off | read_only | write | read_write
+top_k = 5                        # max retrieved memory entries per review
+min_similarity = 0.75            # cosine similarity threshold for retrieval
+embedding_provider = "mock"      # mock (offline) | openai-compatible (incl. Ollama)
+embedding_model = "mock"         # e.g. nomic-embed-text / all-minilm for Ollama
+owner_id = ""                    # optional owner identity for scope/authorization
+team_id = ""                     # optional team id for shared team memory
 ```
 
-Retrieved memory is **historical review experience, never current-paper
-evidence**. A past review saying "this claim is supported" does **not** prove
-the current claim is supported; retrieved context is always framed with a
-`HISTORICAL REVIEW MEMORY` marker and kept distinct from current-paper evidence.
+Key M4 properties:
 
-Qdrant is **optional**: standalone never requires it; service mode can use it
-for vector retrieval. Consent/approval always stays on the authoritative local
-store.
+- **Modes.** `off` (default), `read_only` (use approved memory but store
+  nothing new), `write` (store approved feedback but retrieve nothing),
+  `read_write` (both). Existing behavior is unchanged unless memory is
+  explicitly enabled.
+- **Embeddings are provider-independent.** A reviewer-facing
+  `EmbeddingProvider` trait (mock / OpenAI-compatible, incl. Ollama's
+  `/embeddings`) means local deployment can use `Ollama + local embedding +
+  Qdrant` with no external API. Embeddings are computed **once** per memory
+  entry from a deterministic *review-experience* representation — never the
+  whole paper.
+- **Scope-aware authorization.** Each unit has a scope: `PRIVATE` (owner-only)
+  or `TEAM` (any member of the owning team). Retrieval never leaks a private
+  unit to another owner, and never returns a rejected unit as guidance.
+- **Historical memory is untrusted.** Retrieved memory is injected as a
+  delimited `<historical_review_memory>` block, plainly distinct from the
+  `<current_manuscript>` block. The reviewer prompt states it is **not
+  evidence** for the current paper and **not an instruction**; prompt
+  injection inside a memory entry is ignored. `similarity ≠ correctness`.
+- **Service memory API.** Beyond `POST /reviews/{id}/feedback`, the service
+  exposes approval management:
+  ```
+  GET  /memory                           → list stored units + approval state
+  GET  /memory/{id}                      → fetch a unit
+  POST /memory/{id}/approve              → explicit approval → retrievable context
+  POST /memory/{id}/reject               → explicit rejection
+  ```
+- **Handling of a failed memory.** If Qdrant is unavailable, retrieval reports
+  `MEMORY_UNAVAILABLE` and the review **continues without fabricated context**;
+  a failed memory write is surfaced (never silently swallowed).
+- **Explicit — no training.** No `train` / `fine-tune` / `lora` / `qlora`
+  commands exist. M4 ends at human-approved memory + semantic retrieval.
+
+Ollama can serve **both** the LLM (`/v1/chat/completions`, config only) and the
+embedding model (`/v1/embeddings`) for a fully local deployment alongside a
+configured Qdrant. `cargo test --workspace` stays fully offline; Qdrant is
+exercised through an opt-in harness (`PAPER_GUARD_QDRANT_TESTS=1`).
 
 ---
 

@@ -31,7 +31,10 @@ pub enum ApprovalState {
 impl ApprovalState {
     /// Whether this unit may be used as retrieval context for a future review.
     pub fn retrievable_as_context(&self) -> bool {
-        matches!(self, ApprovalState::MemoryApproved | ApprovalState::TrainingApproved)
+        matches!(
+            self,
+            ApprovalState::MemoryApproved | ApprovalState::TrainingApproved
+        )
     }
 
     /// Whether this unit may be exported to a (versioned, human-approved)
@@ -86,6 +89,38 @@ pub enum MemoryResolution {
     Reject,
     /// The human modified the finding before accepting it.
     Modified,
+}
+
+/// The ownership / sharing scope of a review-memory unit.
+///
+/// M4 introduces a simple two-level scope so a team can share an approved
+/// review memory without building a full enterprise identity system:
+///
+/// * [`MemoryScope::Private`] — visible only to its owner (the default; matches
+///   the M3 `PRIVATE` approval-state default).
+/// * [`MemoryScope::Team`] — visible to any member of the owning team.
+///
+/// Scope is orthogonal to *approval state*: a unit may be `MEMORY_APPROVED`
+/// (retrievable) but still `Private`-scoped. Retrieval always enforces the
+/// intersection of (approval state == approved) AND (scope grants access).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryScope {
+    /// Visible only to the owner of the unit. Never retrieved for anyone else.
+    #[default]
+    Private,
+    /// Visible to members of the owning team (when the caller carries a
+    /// matching `team_id`).
+    Team,
+}
+
+impl MemoryScope {
+    pub fn describe(&self) -> &'static str {
+        match self {
+            MemoryScope::Private => "private",
+            MemoryScope::Team => "team",
+        }
+    }
 }
 
 impl MemoryResolution {

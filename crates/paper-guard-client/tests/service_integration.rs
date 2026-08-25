@@ -39,9 +39,10 @@ fn build_state(data_dir: &str) -> AppState {
     cfg.service.data_dir = data_dir.to_string();
     // Use the file-backed memory so feedback can be recorded and verified.
     cfg.memory.backend = "file".into();
-    let memory =
-        paper_guard_app::MemoryService::new(&cfg.memory.backend, data_dir, "", "review_memory")
-            .unwrap();
+    cfg.memory.enabled = true;
+    cfg.memory.mode = "read_write".into();
+    cfg.memory.owner_id = "cli-user".into();
+    let memory = paper_guard_app::MemoryService::from_config(&cfg).unwrap();
     AppState {
         config: Arc::new(cfg),
         data_dir: data_dir.to_string(),
@@ -121,6 +122,9 @@ async fn cli_client_service_app_lifecycle() {
         unit_text: "the approach reduces latency".into(),
         unit_kind: Some("claim".into()),
         finding_text: Some("claim unsupported".into()),
+        claim_context: Some("the approach reduces latency".into()),
+        evidence_context: Some("no measurement".into()),
+        category: Some("missing_evidence".into()),
         decision: "reject".into(),
         feedback: Some("no evidence provided".into()),
     };

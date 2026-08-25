@@ -83,6 +83,12 @@ pub struct SubmitFeedbackRequest {
     pub unit_kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finding_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claim_context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence_context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
     pub decision: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub feedback: Option<String>,

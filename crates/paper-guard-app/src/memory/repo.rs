@@ -15,14 +15,51 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use super::embedding::{try_cosine, EmbeddingProvider};
 use super::state::{ApprovalState, Consent, ConsentGrant};
 use super::unit::ReviewMemoryEntry;
 
-/// A search over review memory. `count` bounds the number of results.
+/// The authorization context of a retrieval call.
+///
+/// Memory access is scope-aware (see [`ReviewMemoryEntry::accessible_to`]).
+/// A retrieval never returns a unit the caller could not access even if the
+/// vector similarity would otherwise match.
+#[derive(Debug, Clone, Default)]
+pub struct MemoryAuthzContext {
+    /// The caller's owner identity (never a secret). Empty means "no owner",
+    /// which grants access to nothing (a PRIVATE-scope unit needs its owner;
+    /// a TEAM-scope unit needs a matching team).
+    pub owner: String,
+    /// The caller's team identity, if any. Only TEAM-scope units with a
+    /// matching `team_id` are accessible.
+    pub team: Option<String>,
+}
+
+impl MemoryAuthzContext {
+    /// A fully-open context (used by the CLI when operating on the *local*
+    /// store as the owner of all its own entries).
+    pub fn owner_of(owner: &str) -> Self {
+        MemoryAuthzContext {
+            owner: owner.to_string(),
+            team: None,
+        }
+    }
+}
+
+/// A search over review memory. `limit` bounds the number of results.
 #[derive(Debug, Clone)]
 pub struct ReviewMemorySearch {
     pub query: String,
     pub limit: usize,
+    /// Minimum cosine similarity (0..=1) for vector retrieval. 0 disables the
+    /// threshold (everything above 0 is eligible).
+    pub min_similarity: f32,
+    /// Optional category filter (e.g. `unsupported_claim`). Empty = all.
+    pub category: String,
+    /// Optional reviewer-kind filter (e.g. `evidence`). Empty = all.
+    pub reviewer_kind: String,
+    /// The authorization context used to filter access.
+    pub authz: MemoryAuthzContext,
 }
 
 impl Default for ReviewMemorySearch {
@@ -30,8 +67,20 @@ impl Default for ReviewMemorySearch {
         ReviewMemorySearch {
             query: String::new(),
             limit: 5,
+            min_similarity: 0.0,
+            category: String::new(),
+            reviewer_kind: String::new(),
+            authz: MemoryAuthzContext::default(),
         }
     }
+}
+
+/// A scored retrieval result (entry + similarity). The score is informational;
+/// it never changes the entry's evidence status.
+#[derive(Debug, Clone)]
+pub struct MemoryHit {
+    pub entry: ReviewMemoryEntry,
+    pub similarity: f32,
 }
 
 /// The storage abstraction for review memory.
@@ -56,9 +105,30 @@ pub trait ReviewMemoryRepository: Send + Sync {
 
     /// Retrieve units eligible to be used as retrieval context for a query.
     ///
-    /// Only `MEMORY_APPROVED` / `TRAINING_APPROVED` units are ever returned.
-    /// Private/rejected units are never returned regardless of similarity.
-    fn retrieve(&self, search: &ReviewMemorySearch) -> anyhow::Result<Vec<ReviewMemoryEntry>>;
+    /// Only `MEMORY_APPROVED` / `TRAINING_APPROVED` units that the caller is
+    /// **authorized to access** are ever returned. Private/rejected units are
+    /// never returned regardless of similarity, and a unit outside the
+    /// caller's scope (owner/team) is never returned either.
+    fn retrieve(&self, search: &ReviewMemorySearch) -> anyhow::Result<Vec<ReviewMemoryEntry>> {
+        Ok(self
+            .retrieve_scored(search, None)?
+            .into_iter()
+            .map(|h| h.entry)
+            .collect())
+    }
+
+    /// Retrieve units with their similarity score (informational).
+    ///
+    /// `query_embedding` is the caller-provided embedding of the retrieval
+    /// query (via the configured embedding provider). Passing an embedding
+    /// enables true semantic scoring on backends that store vectors; passing
+    /// `None` falls back to a benign relevance/substring match on the file
+    /// backend and returns the authorized approved units (never fabricated).
+    fn retrieve_scored(
+        &self,
+        search: &ReviewMemorySearch,
+        query_embedding: Option<&[f32]>,
+    ) -> anyhow::Result<Vec<MemoryHit>>;
 
     /// Export units that carry explicit `TRAINING_APPROVED` consent for a
     /// versioned training dataset. Private/memory-only units are excluded.
@@ -137,7 +207,11 @@ impl ReviewMemoryRepository for FileReviewMemory {
     fn list(&self, state: Option<ApprovalState>) -> anyhow::Result<Vec<ReviewMemoryEntry>> {
         let entries = self.entries.lock().unwrap();
         Ok(match state {
-            Some(s) => entries.iter().filter(|e| e.approval_state == s).cloned().collect(),
+            Some(s) => entries
+                .iter()
+                .filter(|e| e.approval_state == s)
+                .cloned()
+                .collect(),
             None => entries.clone(),
         })
     }
@@ -157,40 +231,87 @@ impl ReviewMemoryRepository for FileReviewMemory {
         self.persist()
     }
 
-    fn retrieve(&self, search: &ReviewMemorySearch) -> anyhow::Result<Vec<ReviewMemoryEntry>> {
+    fn retrieve_scored(
+        &self,
+        search: &ReviewMemorySearch,
+        query_embedding: Option<&[f32]>,
+    ) -> anyhow::Result<Vec<MemoryHit>> {
         let entries = self.entries.lock().unwrap();
-        // Only explicitly-approved units are retrievable as context. Private
-        // and rejected units are never returned, regardless of similarity.
-        let eligible: Vec<_> = entries
+        // Filter by approval AND authorization BEFORE any scoring, so no unit
+        // a caller cannot access can be returned. Private/rejected units are
+        // never retrievable regardless of similarity.
+        let eligible: Vec<ReviewMemoryEntry> = entries
             .iter()
             .filter(|e| e.retrievable())
+            .filter(|e| e.accessible_to(&search.authz.owner, search.authz.team.as_deref()))
+            .filter(|e| search.category.is_empty() || e.unit.category == search.category)
+            .filter(|e| {
+                search.reviewer_kind.is_empty() || e.unit.reviewer_kind == search.reviewer_kind
+            })
             .cloned()
             .collect();
-        // Without a vector backend we do a simple substring/relevance match on
-        // the query; the Qdrant backend substitutes real vector similarity.
-        let scored: Vec<ReviewMemoryEntry> = if search.query.trim().is_empty() {
-            eligible
-        } else {
-            let q = search.query.to_lowercase();
-            let mut matched: Vec<_> = eligible
+
+        if search.query.trim().is_empty() {
+            // No query: stable order, bounded by limit.
+            return Ok(eligible
                 .into_iter()
-                .map(|e| {
-                    let hay = format!(
-                        "{} {} {}",
-                        e.unit.text,
-                        e.unit.finding,
-                        e.unit.context
-                    )
-                    .to_lowercase();
-                    let score = if hay.contains(&q) { 1.0 } else { 0.0 };
-                    (score, e)
+                .take(search.limit)
+                .map(|entry| MemoryHit {
+                    entry,
+                    similarity: 0.0,
                 })
-                .filter(|(s, _)| *s > 0.0)
-                .collect();
-            matched.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-            matched.into_iter().map(|(_, e)| e).collect()
-        };
-        Ok(scored.into_iter().take(search.limit).collect())
+                .collect());
+        }
+
+        // Semantic scoring: use the caller-provided query embedding when given
+        // (the configured embedding provider's output); otherwise fall back to
+        // a benign substring match for stores that predate vectorization.
+        let query_vec = query_embedding.map(|v| v.to_vec()).or_else(|| {
+            let q = search.query.to_lowercase();
+            if q.trim().is_empty() {
+                None
+            } else {
+                // Deterministic mock hash-space vector when no provider vector
+                // was supplied (covers offline stores + older tests).
+                futures::executor::block_on(
+                    super::embedding::MockEmbeddingProvider::new().embed(&search.query),
+                )
+                .ok()
+            }
+        });
+
+        let mut scored: Vec<MemoryHit> = eligible
+            .into_iter()
+            .map(|entry| {
+                let similarity = match (entry.embedding.as_deref(), query_vec.as_deref()) {
+                    (Some(emb), Some(qv)) => try_cosine(emb, qv),
+                    _ => {
+                        // No vector path: benign substring relevance.
+                        let hay = format!(
+                            "{} {} {}",
+                            entry.unit.text, entry.unit.finding, entry.unit.context
+                        )
+                        .to_lowercase();
+                        let q = search.query.to_lowercase();
+                        if hay.contains(&q) {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    }
+                };
+                MemoryHit { entry, similarity }
+            })
+            .filter(|h| h.similarity >= search.min_similarity.max(0.0))
+            .filter(|h| h.similarity > 0.0)
+            .collect();
+        scored.sort_by(|a, b| {
+            b.similarity
+                .partial_cmp(&a.similarity)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        scored.truncate(search.limit);
+        Ok(scored)
     }
 
     fn export_training_units(&self, limit: usize) -> anyhow::Result<Vec<ReviewMemoryEntry>> {
@@ -211,7 +332,7 @@ mod tests {
     use crate::memory::{ConsentGrant, MemoryResolution};
 
     fn entry(id: &str, text: &str) -> ReviewMemoryEntry {
-        ReviewMemoryEntry::private(
+        let mut e = ReviewMemoryEntry::private(
             id.into(),
             "run-001".into(),
             ReviewMemoryUnit {
@@ -220,12 +341,17 @@ mod tests {
                 text: text.into(),
                 finding: "finding about ".to_string() + text,
                 context: "context".into(),
+                claim_context: text.into(),
+                evidence_context: String::new(),
+                category: "missing_evidence".into(),
             },
             MemoryResolution::Accept,
             "ok".into(),
             "historical".into(),
             "2026-01-01T00:00:00Z".into(),
-        )
+        );
+        e.owner_id = "alice".into();
+        e
     }
 
     fn temp_repo() -> (FileReviewMemory, tempfile::TempDir) {
@@ -234,16 +360,24 @@ mod tests {
         (repo, dir)
     }
 
+    /// A search scoped to the owner of the test entries.
+    fn authz_search(query: &str, limit: usize) -> ReviewMemorySearch {
+        ReviewMemorySearch {
+            query: query.into(),
+            limit,
+            authz: MemoryAuthzContext::owner_of("alice"),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn private_units_cannot_be_retrieved_as_context() {
         let (repo, _dir) = temp_repo();
-        repo.store(entry("mem-1", "the method reduces latency")).unwrap();
+        repo.store(entry("mem-1", "the method reduces latency"))
+            .unwrap();
         // Even a query matching the text cannot retrieve a private unit.
         let results = repo
-            .retrieve(&ReviewMemorySearch {
-                query: "method reduces latency".into(),
-                limit: 10,
-            })
+            .retrieve(&authz_search("method reduces latency", 10))
             .unwrap();
         assert!(results.is_empty());
     }
@@ -259,12 +393,7 @@ mod tests {
             timestamp: "2026-01-01T00:00:00Z".into(),
         })
         .unwrap();
-        let results = repo
-            .retrieve(&ReviewMemorySearch {
-                query: "prior claim".into(),
-                limit: 10,
-            })
-            .unwrap();
+        let results = repo.retrieve(&authz_search("prior claim", 10)).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].memory_id, "mem-1");
         assert!(results[0].retrievable());
@@ -341,12 +470,7 @@ mod tests {
         assert_eq!(entries[0].memory_id, "mem-persist");
         assert_eq!(entries[0].approval_state, ApprovalState::MemoryApproved);
         // And it is retrievable as context.
-        let found = repo
-            .retrieve(&ReviewMemorySearch {
-                query: "persisted claim".into(),
-                limit: 10,
-            })
-            .unwrap();
+        let found = repo.retrieve(&authz_search("persisted claim", 10)).unwrap();
         assert_eq!(found.len(), 1);
     }
 }

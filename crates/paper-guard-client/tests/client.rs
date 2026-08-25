@@ -14,7 +14,7 @@ fn health_json() -> serde_json::Value {
     json!({
         "status": "ok",
         "service": "paper-guard",
-        "version": "0.4.0",
+        "version": "0.5.0",
         "provider": "mock",
         "memory_backend": "none",
     })
@@ -41,7 +41,7 @@ async fn health_returns_typed_result() {
     let client = client_for(&mock.uri());
     let h = client.health().await.unwrap();
     assert_eq!(h.status, "ok");
-    assert_eq!(h.version, "0.4.0");
+    assert_eq!(h.version, "0.5.0");
     assert_eq!(h.provider, "mock");
 }
 
@@ -172,6 +172,9 @@ async fn submit_feedback_is_accepted() {
         unit_text: "the claim".into(),
         unit_kind: Some("claim".into()),
         finding_text: Some("finding text".into()),
+        claim_context: Some("the claim in context".into()),
+        evidence_context: Some("evidence string".into()),
+        category: Some("unsupported_claim".into()),
         decision: "accept".into(),
         feedback: Some("good".into()),
     };

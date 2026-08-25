@@ -136,9 +136,17 @@ impl Default for ServiceConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MemoryConfig {
+    /// Whether Review Memory is enabled at all. Defaults to `false`: existing
+    /// behavior is unchanged unless memory is explicitly enabled.
+    pub enabled: bool,
     /// Backend: `none` (off, default for standalone), `file` (offline JSON
     /// store), or `qdrant` (vector backend, service mode).
     pub backend: String,
+    /// Memory access mode: `off`, `read_only`, `write`, or `read_write`.
+    /// `off` disables both storage and retrieval; `read_only` uses approved
+    /// memory but stores nothing new; `write` stores approved feedback but
+    /// retrieves nothing; `read_write` does both.
+    pub mode: String,
     /// Qdrant endpoint (e.g. `http://localhost:6333`). Only used when
     /// `backend = "qdrant"`.
     pub qdrant_url: String,
@@ -149,16 +157,96 @@ pub struct MemoryConfig {
     /// a training dataset (TRAINING_APPROVED). Defaults to true: nothing is
     /// eligible without explicit consent.
     pub require_approval: bool,
+    /// Maximum number of retrieved memory entries per review. Defaults to 5.
+    #[serde(default = "default_top_k")]
+    pub top_k: usize,
+    /// Minimum cosine similarity threshold (0..=1) for vector retrieval.
+    /// Defaults to 0.75.
+    #[serde(default = "default_min_similarity")]
+    pub min_similarity: f32,
+    /// The embedding provider kind: `mock` (offline, default) or
+    /// `openai-compatible` (incl. Ollama `/embeddings`).
+    pub embedding_provider: String,
+    /// The embedding model name (used by `openai-compatible`; ignored by
+    /// `mock`). Configurable, never hard-coded.
+    pub embedding_model: String,
+    /// The owner identity attributed to locally-recorded memory (never a
+    /// secret; used for scope/authorization).
+    #[serde(default)]
+    pub owner_id: String,
+    /// An optional team id for sharing approved memory across a team.
+    #[serde(default)]
+    pub team_id: String,
+}
+
+fn default_top_k() -> usize {
+    5
+}
+
+fn default_min_similarity() -> f32 {
+    0.75
 }
 
 impl Default for MemoryConfig {
     fn default() -> Self {
         MemoryConfig {
+            enabled: false,
             backend: "none".into(),
+            mode: "off".into(),
             qdrant_url: "http://localhost:6333".into(),
             collection: "review_memory".into(),
             require_approval: true,
+            top_k: default_top_k(),
+            min_similarity: default_min_similarity(),
+            embedding_provider: "mock".into(),
+            embedding_model: "mock".into(),
+            owner_id: String::new(),
+            team_id: String::new(),
         }
+    }
+}
+
+/// The memory access mode (see `[memory] mode`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryMode {
+    /// Store nothing, retrieve nothing.
+    Off,
+    /// Use approved memory as context, but store no new entries.
+    ReadOnly,
+    /// Store approved feedback as memory, but do not retrieve as context.
+    Write,
+    /// Store and retrieve.
+    ReadWrite,
+}
+
+impl MemoryMode {
+    /// Resolve a `[memory] mode` string into a mode.
+    pub fn parse(s: &str) -> MemoryMode {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "read_only" | "readonly" | "read-only" => MemoryMode::ReadOnly,
+            "write" => MemoryMode::Write,
+            "read_write" | "readwrite" | "read-write" => MemoryMode::ReadWrite,
+            _ => MemoryMode::Off,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MemoryMode::Off => "off",
+            MemoryMode::ReadOnly => "read_only",
+            MemoryMode::Write => "write",
+            MemoryMode::ReadWrite => "read_write",
+        }
+    }
+
+    /// Whether this mode stores new entries.
+    pub fn stores(&self) -> bool {
+        matches!(self, MemoryMode::Write | MemoryMode::ReadWrite)
+    }
+
+    /// Whether this mode retrieves memory as context.
+    pub fn retrieves(&self) -> bool {
+        matches!(self, MemoryMode::ReadOnly | MemoryMode::ReadWrite)
     }
 }
 
@@ -374,6 +462,49 @@ mod tests {
         assert_eq!(cfg.service.bind, "127.0.0.1:8080");
         assert!(!cfg.service.allow_external_bind);
         assert_eq!(cfg.memory.backend, "none");
+        // Memory is disabled by default (M4): existing behavior is unchanged.
+        assert!(!cfg.memory.enabled);
+        assert_eq!(cfg.memory.mode, "off");
+        assert_eq!(cfg.memory.top_k, 5);
+        assert_eq!(cfg.memory.min_similarity, 0.75);
+        assert_eq!(cfg.memory.embedding_provider, "mock");
+    }
+
+    #[test]
+    fn memory_mode_parsing() {
+        assert!(MemoryMode::parse("off") == MemoryMode::Off);
+        assert!(MemoryMode::parse("read_only") == MemoryMode::ReadOnly);
+        assert!(MemoryMode::parse("read-write") == MemoryMode::ReadWrite);
+        assert!(MemoryMode::parse("write") == MemoryMode::Write);
+        // Unknown modes fail closed to Off (never implicitly enable memory).
+        assert!(MemoryMode::parse("garbage") == MemoryMode::Off);
+        assert!(!MemoryMode::Off.stores() && !MemoryMode::Off.retrieves());
+        assert!(!MemoryMode::ReadOnly.stores() && MemoryMode::ReadOnly.retrieves());
+        assert!(MemoryMode::Write.stores() && !MemoryMode::Write.retrieves());
+        assert!(MemoryMode::ReadWrite.stores() && MemoryMode::ReadWrite.retrieves());
+    }
+
+    #[test]
+    fn memory_config_roundtrips_with_new_fields() {
+        let src = r#"
+[memory]
+enabled = true
+mode = "read_write"
+top_k = 8
+min_similarity = 0.7
+embedding_provider = "mock"
+embedding_model = "mock"
+owner_id = "alice"
+team_id = "team-a"
+"#;
+        let cfg: AppConfig = toml::from_str(src).unwrap();
+        assert!(cfg.memory.enabled);
+        assert_eq!(cfg.memory.mode, "read_write");
+        assert_eq!(cfg.memory.top_k, 8);
+        assert_eq!(cfg.memory.min_similarity, 0.7);
+        assert_eq!(cfg.memory.owner_id, "alice");
+        assert_eq!(cfg.memory.team_id, "team-a");
+        assert_eq!(MemoryMode::parse(&cfg.memory.mode), MemoryMode::ReadWrite);
     }
 
     #[test]

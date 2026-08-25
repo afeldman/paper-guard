@@ -98,9 +98,10 @@ async fn live_single_reviewer_end_to_end() {
         document: parsed.document.clone(),
         prompt_version: "live-v1".into(),
         run_id: "live-run".into(),
+        memory_context: String::new(),
     };
-    let reviewers: Vec<Box<dyn paper_guard_review::Reviewer>> = vec![Box::new(
-        paper_guard_review::AdversarialReviewer {
+    let reviewers: Vec<Box<dyn paper_guard_review::Reviewer>> =
+        vec![Box::new(paper_guard_review::AdversarialReviewer {
             settings: ReviewerSettings {
                 enabled: true,
                 provider: "openai-compatible".into(),
@@ -108,10 +109,11 @@ async fn live_single_reviewer_end_to_end() {
                 seed: None,
                 temperature: 0.0,
             },
-        },
-    )];
+        })];
     let runner = ReviewRunner::new(1);
-    let results = runner.run(&ctx, reviewers, std::sync::Arc::new(provider)).await;
+    let results = runner
+        .run(&ctx, reviewers, std::sync::Arc::new(provider))
+        .await;
     let result = &results[0];
 
     // A real reviewer either succeeds with structured findings OR fails with a
@@ -122,7 +124,10 @@ async fn live_single_reviewer_end_to_end() {
             let output = result.output.as_ref().expect("output");
             // Prove the retained artifact is REVIEWER_OUTPUT with a reproducible
             // request hash, never an author contribution.
-            assert!(output.request_hash.as_deref().is_some_and(|h| !h.is_empty()));
+            assert!(output
+                .request_hash
+                .as_deref()
+                .is_some_and(|h| !h.is_empty()));
             // Every finding is a valid domain Finding (the strict resolver would
             // have errored otherwise), so this is already validated.
         }
@@ -152,19 +157,26 @@ async fn live_single_reviewer_end_to_end() {
     // Record the single reviewer's outcome (with usage, no secrets).
     run.reviewer_results.push(paper_guard_ledger::AgentOutcome {
         agent: "adversarial".into(),
-        status: if result.status == AgentStatus::Success { "success" } else { "failed" }.into(),
+        status: if result.status == AgentStatus::Success {
+            "success"
+        } else {
+            "failed"
+        }
+        .into(),
         error: result.error.clone(),
-        finding_count: result.output.as_ref().map(|o| o.findings.len()).unwrap_or(0),
-        provider_usage: result
+        finding_count: result
             .output
             .as_ref()
-            .and_then(|o| o.usage)
-            .map(|u| paper_guard_ledger::ProviderUsage {
+            .map(|o| o.findings.len())
+            .unwrap_or(0),
+        provider_usage: result.output.as_ref().and_then(|o| o.usage).map(|u| {
+            paper_guard_ledger::ProviderUsage {
                 provider: "openai_compatible".into(),
                 model: model.clone(),
                 input_tokens: u.prompt_tokens,
                 output_tokens: u.completion_tokens,
-            }),
+            }
+        }),
     });
     run.status = paper_guard_ledger::RunStatus::Completed;
     ledger.save_run(&run).expect("save live run");
@@ -172,16 +184,16 @@ async fn live_single_reviewer_end_to_end() {
     // ---- Verification + cleanup ----
     let serialized = serde_json::to_string(&run).expect("serialize run");
     // The ledger must never contain a secret.
-    assert!(!serialized.contains("sk-"), "ledger must not contain an API key");
+    assert!(
+        !serialized.contains("sk-"),
+        "ledger must not contain an API key"
+    );
     std::fs::remove_dir_all(&tmp).ok();
 }
 
 /// A unique temp directory for the live-run ledger.
 fn temp_ledger_dir() -> String {
-    let dir = std::env::temp_dir().join(format!(
-        "paper-guard-live-{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("paper-guard-live-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::create_dir_all(&dir);
     dir.to_string_lossy().to_string()

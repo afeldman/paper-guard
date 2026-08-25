@@ -18,20 +18,21 @@ pub mod schema;
 pub use judge::{Judge, JudgeAction, JudgeOutput, JudgeResult};
 pub use output::{resolve_findings, ReviewOutputError, ReviewerOutput, REVIEWER_OUTPUT_INVALID};
 pub use reviewer::{
-    render_document_for_prompt, AdversarialReviewer, EvidenceReviewer, FigureReviewer,
-    ReferenceReviewer, Reviewer, ReviewerContext, ReviewerSettings, ScientificReviewer,
+    render_document_for_prompt, render_memory_context, AdversarialReviewer, EvidenceReviewer,
+    FigureReviewer, ReferenceReviewer, Reviewer, ReviewerContext, ReviewerSettings,
+    ScientificReviewer, MEMORY_UNTRUSTED_PREAMBLE,
 };
 pub use reviewers::INTEGRITY_PREAMBLE;
-pub use runner::{collect_findings, AgentStatus, AgentRunResult, ReviewRunner};
+pub use runner::{collect_findings, AgentRunResult, AgentStatus, ReviewRunner};
 pub use schema::{
     finding_from_payload, finding_to_payload, FindingCategory, FindingPayload, FindingSeverity,
-    ReviewerKind,
+    MemoryBrief, ReviewerKind,
 };
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use paper_guard_core::{DocumentMeta, Section, SectionId, Paragraph, ParagraphId};
+    use paper_guard_core::{DocumentMeta, Paragraph, ParagraphId, Section, SectionId};
     use paper_guard_llm::{MockLlmScenario, MockProvider};
 
     fn tiny_doc() -> paper_guard_core::Document {
@@ -80,6 +81,7 @@ mod tests {
             document: tiny_doc(),
             prompt_version: "v1".into(),
             run_id: "run-001".into(),
+            memory_context: String::new(),
         };
 
         let reviewers: Vec<Box<dyn Reviewer>> = vec![Box::new(AdversarialReviewer {
@@ -115,6 +117,7 @@ mod tests {
             document: tiny_doc(),
             prompt_version: "v1".into(),
             run_id: "run-002".into(),
+            memory_context: String::new(),
         };
         let reviewers: Vec<Box<dyn Reviewer>> = vec![Box::new(ScientificReviewer {
             settings: ReviewerSettings::default_with_model(ReviewerKind::Scientific, "empty-model"),

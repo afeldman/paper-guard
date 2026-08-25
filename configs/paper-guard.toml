@@ -93,6 +93,18 @@ backend = "none"
 qdrant_url = "http://localhost:6333"
 collection = "review_memory"
 require_approval = true
+# M4: Review Memory is disabled by default. When enabled, mode is one of
+# off / read_only / write / read_write. Embeddings use the mock provider by
+# default (offline); set embedding_provider = "openai-compatible" + an
+# embedding_model to use an /embeddings endpoint (e.g. Ollama).
+enabled = false
+mode = "off"
+top_k = 5
+min_similarity = 0.75
+embedding_provider = "mock"
+embedding_model = "mock"
+owner_id = ""
+team_id = ""
 
 # --- Remote service mode (M3.5) -------------------------------------------
 # Optional connection to a centrally-deployed Paper Guard service. When

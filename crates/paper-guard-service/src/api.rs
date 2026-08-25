@@ -133,6 +133,15 @@ pub struct SubmitFeedbackRequest {
     pub unit_kind: Option<String>,
     /// The finding text being assessed.
     pub finding_text: Option<String>,
+    /// Optional claim context (short; never a whole manuscript).
+    #[serde(default)]
+    pub claim_context: Option<String>,
+    /// Optional evidence context (short; never a whole manuscript).
+    #[serde(default)]
+    pub evidence_context: Option<String>,
+    /// Optional category for the review experience (e.g. `unsupported_claim`).
+    #[serde(default)]
+    pub category: Option<String>,
     /// The human decision: `accept`, `reject`, or `modified`.
     pub decision: String,
     /// Optional free-text human feedback.
@@ -147,6 +156,48 @@ pub struct FeedbackResponse {
     pub approval_state: String,
 }
 
+/// A memory entry (approved state + summary) as returned by the memory API.
+/// Deliberately omits raw manuscript text; only short context/finding fields.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct MemoryEntryDto {
+    pub memory_id: String,
+    pub schema_version: u32,
+    pub source_run_id: String,
+    #[serde(default)]
+    pub source_finding_id: String,
+    pub reviewer_kind: String,
+    #[serde(default)]
+    pub category: String,
+    pub scope: String,
+    pub approval_state: String,
+    pub resolution: String,
+    pub finding: String,
+    #[serde(default)]
+    pub human_feedback: Option<String>,
+    pub created_at: String,
+}
+
+/// Request body for approving/rejecting a memory unit.
+#[derive(Debug, serde::Deserialize)]
+pub struct MemoryDecisionRequest {
+    /// The actor/identity performing the decision (never a secret).
+    pub actor: String,
+}
+
+/// Response for `POST /memory/{id}/approve` / `reject`.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct MemoryDecisionResponse {
+    pub memory_id: String,
+    pub approval_state: String,
+}
+
+/// Response for `GET /memory`.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct MemoryListResponse {
+    pub entries: Vec<MemoryEntryDto>,
+    pub count: usize,
+}
+
 // ---------------------------------------------------------------------------
 // Router + serve
 // ---------------------------------------------------------------------------
@@ -159,6 +210,10 @@ pub fn app(state: AppState) -> Router {
         .route("/reviews/:run_id", get(review_status))
         .route("/reviews/:run_id/findings", get(review_findings))
         .route("/reviews/:run_id/feedback", post(submit_feedback))
+        .route("/memory", get(list_memory))
+        .route("/memory/:memory_id", get(get_memory))
+        .route("/memory/:memory_id/approve", post(approve_memory))
+        .route("/memory/:memory_id/reject", post(reject_memory))
         .with_state(state)
 }
 
@@ -301,8 +356,11 @@ async fn submit_feedback(
         reviewer_kind: req.reviewer_kind.clone(),
         kind,
         text: req.unit_text.clone(),
-        finding: req.finding_text.unwrap_or_else(|| "".into()),
+        finding: req.finding_text.clone().unwrap_or_else(|| "".into()),
         context: String::new(),
+        claim_context: req.claim_context.clone().unwrap_or_default(),
+        evidence_context: req.evidence_context.clone().unwrap_or_default(),
+        category: req.category.clone().unwrap_or_default(),
     };
     let feedback = paper_guard_app::FindingFeedback {
         finding_id: run_id.clone(),
@@ -311,20 +369,143 @@ async fn submit_feedback(
     };
     let entry = state
         .memory
-        .record_feedback(&run_id, unit, &feedback, "service-human-feedback")
+        .record_feedback(&run_id, "", unit, &feedback, "service-human-feedback")
+        .await
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({ "error": e.to_string() })),
             )
         })?;
+    let (memory_id, approval_state) = match entry {
+        Some(e) => (e.memory_id.clone(), e.approval_state.describe().to_string()),
+        // Memory is disabled / writes off: the feedback was accepted but no
+        // memory candidate was stored (explicit, never fabricated).
+        None => (String::new(), "disabled".to_string()),
+    };
     Ok((
         StatusCode::OK,
         Json(FeedbackResponse {
-            memory_id: entry.memory_id.clone(),
-            approval_state: entry.approval_state.describe().to_string(),
+            memory_id,
+            approval_state,
         }),
     ))
+}
+
+/// `GET /memory` — list stored memory units (optionally filtered by status).
+async fn list_memory(
+    State(state): State<AppState>,
+) -> Result<Json<MemoryListResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let entries = state
+        .memory
+        .list(None)
+        .map_err(|e| api_err(&e.to_string()))?;
+    let dto: Vec<MemoryEntryDto> = entries.iter().map(to_memory_dto).collect();
+    let count = dto.len();
+    Ok(Json(MemoryListResponse {
+        entries: dto,
+        count,
+    }))
+}
+
+/// `GET /memory/{memory_id}` — fetch a single memory unit.
+async fn get_memory(
+    State(state): State<AppState>,
+    Path(memory_id): Path<String>,
+) -> Result<Json<MemoryEntryDto>, (StatusCode, Json<serde_json::Value>)> {
+    let entry = state
+        .memory
+        .load(&memory_id)
+        .map_err(|e| api_err(&e.to_string()))?
+        .ok_or_else(|| api_err(&format!("memory unit {memory_id} not found")))?;
+    Ok(Json(to_memory_dto(&entry)))
+}
+
+/// `POST /memory/{memory_id}/approve` — explicit human approval to use a
+/// private candidate as retrieval context. This is the explicit approval that
+/// turns feedback into shared/retrievable memory.
+async fn approve_memory(
+    State(state): State<AppState>,
+    Path(memory_id): Path<String>,
+    Json(req): Json<MemoryDecisionRequest>,
+) -> Result<(StatusCode, Json<MemoryDecisionResponse>), (StatusCode, Json<serde_json::Value>)> {
+    state
+        .memory
+        .approve_memory(&memory_id, &req.actor)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+        })?;
+    let state_str = state
+        .memory
+        .state_of(&memory_id)
+        .map_err(|e| api_err(&e.to_string()))?
+        .map(|s| s.describe().to_string())
+        .unwrap_or_else(|| "unknown".into());
+    Ok((
+        StatusCode::OK,
+        Json(MemoryDecisionResponse {
+            memory_id,
+            approval_state: state_str,
+        }),
+    ))
+}
+
+/// `POST /memory/{memory_id}/reject` — explicit human rejection. The unit is
+/// removed from retrieval/export eligibility (audited).
+async fn reject_memory(
+    State(state): State<AppState>,
+    Path(memory_id): Path<String>,
+    Json(req): Json<MemoryDecisionRequest>,
+) -> Result<(StatusCode, Json<MemoryDecisionResponse>), (StatusCode, Json<serde_json::Value>)> {
+    state
+        .memory
+        .reject_memory(&memory_id, &req.actor)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+        })?;
+    let state_str = state
+        .memory
+        .state_of(&memory_id)
+        .map_err(|e| api_err(&e.to_string()))?
+        .map(|s| s.describe().to_string())
+        .unwrap_or_else(|| "unknown".into());
+    Ok((
+        StatusCode::OK,
+        Json(MemoryDecisionResponse {
+            memory_id,
+            approval_state: state_str,
+        }),
+    ))
+}
+
+/// Convert a memory entry into its public DTO (no raw manuscript text).
+fn to_memory_dto(e: &paper_guard_app::ReviewMemoryEntry) -> MemoryEntryDto {
+    MemoryEntryDto {
+        memory_id: e.memory_id.clone(),
+        schema_version: e.schema_version,
+        source_run_id: e.source_run_id.clone(),
+        source_finding_id: e.source_finding_id.clone(),
+        reviewer_kind: e.unit.reviewer_kind.clone(),
+        category: e.unit.category.clone(),
+        scope: e.scope.describe().to_string(),
+        approval_state: e.approval_state.describe().to_string(),
+        resolution: e.resolution.as_str().to_string(),
+        finding: e.unit.finding.clone(),
+        human_feedback: if e.human_feedback.is_empty() {
+            None
+        } else {
+            Some(e.human_feedback.clone())
+        },
+        created_at: e.created_at.clone(),
+    }
 }
 
 /// Build a versioned [`FindingPayload`] DTO from a ledger finding record.
@@ -442,13 +623,14 @@ mod tests {
         cfg.reproducibility.data_dir = dir.path().to_str().unwrap().to_string();
         cfg.service.data_dir = dir.path().to_str().unwrap().to_string();
         cfg.memory.backend = "file".into();
-        let memory = MemoryService::new(
-            &cfg.memory.backend,
-            dir.path().to_str().unwrap(),
-            "",
-            "review_memory",
-        )
-        .unwrap();
+        cfg.memory.enabled = true;
+        cfg.memory.mode = "read_write".into();
+        cfg.memory.owner_id = "alice".into();
+        // The mock embedding hash-space is coarse; using a 0 threshold lets
+        // offline tests verify the approval→retrieval workflow without a real
+        // semantic distance requiring a tight vector similarity.
+        cfg.memory.min_similarity = 0.0;
+        let memory = paper_guard_app::MemoryService::from_config(&cfg).unwrap();
         (
             AppState {
                 config: Arc::new(cfg),
@@ -666,7 +848,8 @@ A claim with INSUFFICIENT_EVIDENCE.
         // Without consent, the unit is not retrievable as context.
         let ctx = state
             .memory
-            .retrieve_context("the method reduces latency", 10)
+            .retrieve_context("the method reduces latency", None, None, None, None)
+            .await
             .unwrap();
         assert!(ctx.is_empty());
     }
@@ -691,5 +874,175 @@ A claim with INSUFFICIENT_EVIDENCE.
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn feedback_then_approval_then_retrieval_workflow() {
+        // §36 service test: feedback → approval → memory → retrieval.
+        let (state, _dir) = test_state();
+        // 1. Record feedback (private candidate).
+        let body = serde_json::json!({
+            "reviewer_kind": "evidence",
+            "unit_text": "the method reduces latency",
+            "unit_kind": "claim",
+            "finding_text": "claim unsupported",
+            "claim_context": "the method reduces latency",
+            "evidence_context": "no measurement",
+            "category": "missing_evidence",
+            "decision": "reject",
+            "feedback": "Figure 6 supports this claim."
+        });
+        let resp = app(state.clone())
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/reviews/run-001/feedback")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let fb: FeedbackResponse = serde_json::from_slice(&bytes).unwrap();
+        let memory_id = fb.memory_id.clone();
+        assert_eq!(fb.approval_state, "private");
+
+        // 2. Before approval, it is not retrievable.
+        let before = state
+            .memory
+            .retrieve_context("the method reduces latency", None, None, None, None)
+            .await
+            .unwrap();
+        assert!(before.is_empty());
+
+        // 3. Approve via the memory endpoint.
+        let resp = app(state.clone())
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri(format!("/memory/{memory_id}/approve"))
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(
+                        serde_json::json!({ "actor": "alice" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let decision: MemoryDecisionResponse = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(decision.approval_state, "memory_approved");
+
+        // 4. After approval, the unit is retrievable as context.
+        let after = state
+            .memory
+            .retrieve_context("the method reduces latency", None, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(after.len(), 1);
+        assert!(after[0].retrievable());
+
+        // 5. GET /memory/{id} returns the unit; GET /memory lists it.
+        let resp = app(state.clone())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!("/memory/{memory_id}"))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let dto: MemoryEntryDto = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(dto.approval_state, "memory_approved");
+        assert_eq!(dto.category, "missing_evidence");
+
+        let resp = app(state.clone())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/memory")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let list: MemoryListResponse = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(list.count, 1);
+        assert_eq!(list.entries[0].memory_id, memory_id);
+    }
+
+    #[tokio::test]
+    async fn reject_removes_memory_from_retrieval() {
+        let (state, _dir) = test_state();
+        let body = serde_json::json!({
+            "reviewer_kind": "evidence",
+            "unit_text": "rejected claim",
+            "decision": "accept",
+            "feedback": ""
+        });
+        let resp = app(state.clone())
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/reviews/run-002/feedback")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let fb: FeedbackResponse = serde_json::from_slice(&bytes).unwrap();
+        let memory_id = fb.memory_id.clone();
+
+        // Approve then reject.
+        let resp = app(state.clone())
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri(format!("/memory/{memory_id}/approve"))
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(
+                        serde_json::json!({ "actor": "alice" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let resp = app(state)
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri(format!("/memory/{memory_id}/reject"))
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(
+                        serde_json::json!({ "actor": "alice" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let decision: MemoryDecisionResponse = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(decision.approval_state, "rejected");
     }
 }

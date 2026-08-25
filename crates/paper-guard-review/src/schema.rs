@@ -11,6 +11,42 @@ use paper_guard_core::{
 /// Re-exported convenience aliases.
 pub use paper_guard_core::{FindingCategory, FindingSeverity, ReviewerKind};
 
+/// A lightweight, already-unauthorized-filtered summary of a single historical
+/// review-memory entry, used to build the reviewer's memory context block.
+///
+/// It intentionally omits raw manuscript text and any owner/team identifiers;
+/// the pipeline builds these from approved, authorized memory units only.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MemoryBrief {
+    /// The review-experience category (e.g. `unsupported_claim`).
+    pub category: String,
+    /// The finding text.
+    pub finding: String,
+    /// The human decision (`accept`/`reject`/`modified`).
+    pub decision: String,
+    /// The human's feedback (if any), kept short.
+    #[serde(default)]
+    pub human_feedback: String,
+}
+
+impl MemoryBrief {
+    /// Build a brief from a memory unit (used by the pipeline). `finding`,
+    /// `decision`, and `feedback` are drawn from the approved memory entry.
+    pub fn new(
+        category: String,
+        finding: String,
+        decision: String,
+        human_feedback: String,
+    ) -> Self {
+        MemoryBrief {
+            category,
+            finding,
+            decision,
+            human_feedback,
+        }
+    }
+}
+
 /// A parsed finding as it appears in the JSON schema (spec-compatible).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FindingPayload {

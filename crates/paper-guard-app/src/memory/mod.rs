@@ -12,14 +12,21 @@
 //! to a training dataset (`TRAINING_APPROVED`) through *explicit* human
 //! approval. A paper is never used for training merely because it was reviewed.
 
+pub mod embedding;
 pub mod qdrant;
 mod repo;
 mod state;
 mod unit;
 
+pub use embedding::{
+    cosine_similarity, try_cosine, Embedding, EmbeddingProvider, EmbeddingProviderConfig,
+    MockEmbeddingProvider, OpenAICompatibleEmbeddingProvider,
+};
 pub use qdrant::QdrantReviewMemory;
-pub use repo::{FileReviewMemory, ReviewMemoryRepository, ReviewMemorySearch};
-pub use state::{ApprovalState, Consent, ConsentGrant, MemoryResolution};
+pub use repo::{
+    FileReviewMemory, MemoryAuthzContext, MemoryHit, ReviewMemoryRepository, ReviewMemorySearch,
+};
+pub use state::{ApprovalState, Consent, ConsentGrant, MemoryResolution, MemoryScope};
 pub use unit::{MemoryKind, ReviewMemoryEntry, ReviewMemoryUnit};
 
 /// A short, stable title of the module for logging.

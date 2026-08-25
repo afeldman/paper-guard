@@ -41,7 +41,21 @@ data:
     data_dir = "/app/data"
 
     [memory]
+    # Memory is disabled by default in M4: enable explicitly. When enabled,
+    # mode is one of off / read_only / write / read_write.
+    enabled = {{ .Values.memory.enabled }}
+    mode = "{{ .Values.memory.mode }}"
     backend = "{{ if .Values.qdrant.endpoint }}qdrant{{ else }}none{{ end }}"
     qdrant_url = "{{ .Values.qdrant.endpoint }}"
     collection = "{{ .Values.qdrant.collection }}"
     require_approval = true
+    top_k = {{ .Values.memory.topK }}
+    min_similarity = {{ .Values.memory.minSimilarity }}
+    embedding_provider = "{{ .Values.memory.embeddingProvider }}"
+    embedding_model = "{{ .Values.memory.embeddingModel }}"
+    {{- if .Values.memory.ownerId }}
+    owner_id = "{{ .Values.memory.ownerId }}"
+    {{- end }}
+    {{- if .Values.memory.teamId }}
+    team_id = "{{ .Values.memory.teamId }}"
+    {{- end }}

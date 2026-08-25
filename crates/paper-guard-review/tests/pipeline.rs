@@ -1,11 +1,11 @@
 //! Integration tests: LaTeX -> canonical -> review -> judge -> revision.
 
+use paper_guard_core::RevisionOperation;
 use paper_guard_llm::{MockLlmScenario, MockProvider};
 use paper_guard_parser::Parser;
 use paper_guard_review::{
-    collect_findings, ReviewerContext, ReviewerKind, ReviewerSettings, ReviewRunner,
+    collect_findings, ReviewRunner, ReviewerContext, ReviewerKind, ReviewerSettings,
 };
-use paper_guard_core::RevisionOperation;
 
 fn sample_latex() -> &'static str {
     r#"\documentclass{article}
@@ -20,11 +20,15 @@ There is no experiment or dataset to back this claim.
 
 async fn build_review_ctx() -> ReviewerContext {
     let parser = paper_guard_parser::LatexParser;
-    let parsed = parser.parse("main.tex", sample_latex().as_bytes()).await.unwrap();
+    let parsed = parser
+        .parse("main.tex", sample_latex().as_bytes())
+        .await
+        .unwrap();
     ReviewerContext {
         document: parsed.document,
         prompt_version: "v1".into(),
         run_id: "run-001".into(),
+        memory_context: String::new(),
     }
 }
 
@@ -39,11 +43,10 @@ async fn full_pipeline_with_fixture_finding() {
         std::sync::Arc::new(MockProvider::new("mock", scenario));
 
     let ctx = build_review_ctx().await;
-    let reviewers: Vec<Box<dyn paper_guard_review::Reviewer>> = vec![Box::new(
-        paper_guard_review::AdversarialReviewer {
+    let reviewers: Vec<Box<dyn paper_guard_review::Reviewer>> =
+        vec![Box::new(paper_guard_review::AdversarialReviewer {
             settings: ReviewerSettings::default_with_model(ReviewerKind::Adversarial, "mock"),
-        },
-    )];
+        })];
     let runner = ReviewRunner::new(4);
     let results = runner.run(&ctx, reviewers, provider).await;
     assert_eq!(results.len(), 1);
@@ -60,7 +63,10 @@ async fn full_pipeline_with_fixture_finding() {
     let judge = paper_guard_review::Judge::new("v1", true);
     let judged = judge.consolidate(findings);
     assert!(!judged.revisions.is_empty());
-    assert_eq!(judged.revisions[0].operation, RevisionOperation::WeakenClaim);
+    assert_eq!(
+        judged.revisions[0].operation,
+        RevisionOperation::WeakenClaim
+    );
 
     // The revision agent weakens the claim deterministically without adding
     // any content.

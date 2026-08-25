@@ -1,0 +1,58 @@
+# Example configuration using real LLM providers.
+# Copy to `paper-guard.toml` and adjust model names / API keys.
+
+[project]
+name = "my-paper"
+
+[input]
+format = "latex"
+
+# Each reviewer is assigned an independent provider + model.
+[reviewers.scientific]
+enabled = true
+provider = "openai"
+model = "gpt-4o"
+seed = 42
+temperature = 0.0
+
+[reviewers.adversarial]
+enabled = true
+provider = "anthropic"
+model = "claude-sonnet-4"
+seed = 42
+temperature = 0.2
+
+[reviewers.evidence]
+enabled = true
+provider = "openai"
+model = "gpt-4o"
+seed = 42
+temperature = 0.0
+
+[reviewers.references]
+enabled = true
+provider = "openai"
+model = "gpt-4o-mini"
+seed = 42
+temperature = 0.0
+
+# Figure/Table review benefits from a multimodal model.
+[reviewers.figures]
+enabled = true
+provider = "openai"
+model = "gpt-4o"
+seed = 42
+temperature = 0.0
+
+[judge]
+model = "gpt-4o"
+require_human_approval_for_major = true
+
+[revision]
+require_human_approval_for_major = true
+output_dir = ".paper-guard"
+
+[reproducibility]
+seed = 42
+prompt_version = "v1"
+data_dir = ".paper-guard"

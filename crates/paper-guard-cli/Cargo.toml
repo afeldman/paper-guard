@@ -1,0 +1,29 @@
+[package]
+name = "paper-guard-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Command-line interface for Paper Guard."
+
+[[bin]]
+name = "paper-guard"
+path = "src/main.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+clap.workspace = true
+toml.workspace = true
+chrono.workspace = true
+rust-loguru.workspace = true
+parking_lot = "0.12"
+paper-guard-core.workspace = true
+paper-guard-llm.workspace = true
+paper-guard-parser.workspace = true
+paper-guard-renderer.workspace = true
+paper-guard-review.workspace = true
+paper-guard-agents.workspace = true
+paper-guard-ledger.workspace = true
+paper-guard-validation.workspace = true

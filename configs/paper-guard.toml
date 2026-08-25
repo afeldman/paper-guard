@@ -1,0 +1,73 @@
+# Paper Guard configuration (versioned).
+# This is the deterministic default used for reproducibility and offline runs.
+
+[project]
+name = "my-paper"
+
+[input]
+# format = "latex"   # optional override; otherwise inferred from the file extension
+
+# --- LLM provider selection ------------------------------------------------
+# `provider = "mock"` (default) keeps every run offline and deterministic.
+# Set `provider = "openai-compatible"` to use the real provider; the endpoint
+# details are under [providers.openai-compatible].
+[llm]
+provider = "mock"
+
+# --- OpenAI-compatible backend ---------------------------------------------
+# The single production backend connecting to ANY OpenAI-compatible endpoint
+# (OpenAI, Mammoth.ai, a local server, ...). Switching backends is a
+# configuration change only, never a code change.
+# The API key is NEVER stored here — only the name of the environment variable
+# that holds it. Request logging never includes the key.
+[providers.openai-compatible]
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+model = "gpt-4o-mini"
+timeout_seconds = 120
+max_retries = 2
+structured_output = true
+vision = false
+
+# --- Reviewer LLM assignments -------------------------------------------
+# Each reviewer runs independently and is assigned a provider + model.
+# With `provider = "mock"`, Paper Guard uses deterministic fixtures so the
+# whole pipeline runs offline with no external LLM API.
+[reviewers.scientific]
+enabled = true
+provider = "mock"
+model = "mock"
+
+[reviewers.adversarial]
+enabled = true
+provider = "mock"
+model = "mock"
+
+[reviewers.evidence]
+enabled = true
+provider = "mock"
+model = "mock"
+
+[reviewers.references]
+enabled = true
+provider = "mock"
+model = "mock"
+
+[reviewers.figures]
+enabled = true
+provider = "mock"
+model = "mock"
+
+[judge]
+model = "mock"
+require_human_approval_for_major = true
+
+[revision]
+# Major changes require explicit human approval before they are applied.
+require_human_approval_for_major = true
+output_dir = ".paper-guard"
+
+[reproducibility]
+seed = 42
+prompt_version = "v1"
+data_dir = ".paper-guard"

@@ -1,0 +1,72 @@
+# Paper Guard configuration for the real OpenAI-compatible provider.
+#
+# Use with:  paper-guard run manuscript.tex --config configs/paper-guard-openai.toml
+#
+# The API key is NOT stored in this file. Provide it via the environment
+# variable named by `api_key_env` (default OPENAI_API_KEY):
+#   export OPENAI_API_KEY=sk-...
+#
+# The same [providers.openai-compatible] section can point at ANY
+# OpenAI-compatible endpoint (OpenAI, Mammoth.ai, a local server, etc.):
+#   * OpenAI        => base_url = "https://api.openai.com/v1"
+#   * Mammoth.ai    => base_url = "<Mammoth.ai OpenAI-compatible endpoint>"
+#   * local server  => base_url = "http://localhost:8080/v1"
+
+[project]
+name = "my-paper"
+
+[input]
+# format = "latex"
+
+[llm]
+provider = "openai-compatible"
+
+[providers.openai-compatible]
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+model = "gpt-4o-mini"
+timeout_seconds = 120
+max_retries = 2
+# The reviewer side always validates structure; this requests JSON mode from
+# the endpoint when supported.
+structured_output = true
+# Set to true only if the configured model actually supports vision.
+vision = false
+
+[reviewers.scientific]
+enabled = true
+provider = "openai-compatible"
+model = "gpt-4o-mini"
+
+[reviewers.adversarial]
+enabled = true
+provider = "openai-compatible"
+model = "gpt-4o-mini"
+
+[reviewers.evidence]
+enabled = true
+provider = "openai-compatible"
+model = "gpt-4o-mini"
+
+[reviewers.references]
+enabled = true
+provider = "openai-compatible"
+model = "gpt-4o-mini"
+
+[reviewers.figures]
+enabled = true
+provider = "openai-compatible"
+model = "gpt-4o-mini"
+
+[judge]
+model = "gpt-4o-mini"
+require_human_approval_for_major = true
+
+[revision]
+require_human_approval_for_major = true
+output_dir = ".paper-guard"
+
+[reproducibility]
+seed = 42
+prompt_version = "v1"
+data_dir = ".paper-guard"

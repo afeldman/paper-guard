@@ -115,11 +115,40 @@ paper-guard revise  <run> [--config PATH]
 paper-guard validate <run> [--config PATH]
 paper-guard ledger  [--config PATH]
 paper-guard report  [<run>] [--config PATH]
+paper-guard serve   [--config PATH] [--bind ADDR]        # optional HTTP service
+paper-guard health  [--config PATH]
+paper-guard memory list               # list review-memory units + approval state
+paper-guard memory approve-memory <id> [--actor NAME]
+paper-guard memory approve-training <id> [--actor NAME]
 ```
 
 Run the complete workflow with `paper-guard run manuscript/`.
 
 ---
+
+## Service mode
+
+`paper-guard serve` starts an optional HTTP service that calls the **same**
+application pipeline as the CLI (no duplicate review logic). It binds to
+**loopback only** by default and refuses unauthenticated external exposure
+unless you explicitly enable it.
+
+```
+GET  /health                        → service status
+POST /reviews                       → run the shared review pipeline
+GET  /reviews/{run_id}              → review status/result
+GET  /reviews/{run_id}/findings     → review findings
+POST /reviews/{run_id}/feedback     → record human ACCEPT/REJECT/MODIFY
+```
+
+```bash
+paper-guard serve --config configs/paper-guard.toml   # listens on 127.0.0.1:8080
+```
+
+Responses are stable JSON (API DTOs), decoupled from internal Rust types
+(M3 §8). Authentication/authorization is out of scope for M3 and documented as
+a limitation; the loopback-only bind is the safeguard. Uploaded manuscripts are
+treated as untrusted data and never logged.
 
 ## Configuration
 
@@ -186,6 +215,22 @@ structured_output = true            # request JSON mode if the endpoint supports
 vision = false                      # set true only when the model truly supports vision
 ```
 
+**Ollama (local LLM).** Ollama exposes an OpenAI-compatible `/v1` endpoint, so a
+local model uses the **same** provider — only `base_url` (and optionally
+`api_key_env`) differ. `api_key_env` is **optional**: when absent/empty, requests
+are sent without an Authorization header (local Ollama typically needs no key).
+See `configs/paper-guard-ollama.toml`:
+
+```toml
+[llm]
+provider = "openai-compatible"
+
+[providers.openai-compatible]
+base_url = "http://localhost:11434/v1"
+model = "llama3.2"
+# api_key_env = "OLLAMA_API_KEY"   # optional for local Ollama
+```
+
 Key properties:
 
 - **Secrets never touch this repo.** The API key is read from the environment
@@ -211,6 +256,66 @@ Key properties:
 
 See `configs/paper-guard.toml` (deterministic/mock) and
 `configs/paper-guard-openai.toml` (the real provider).
+
+---
+
+## Review Memory & Qdrant
+
+Review Memory is the M3 foundation for retrieval-based learning. A human
+reviewer records `ACCEPT` / `REJECT` / `MODIFY` on an AI finding (service
+`POST /reviews/{id}/feedback` or CLI `memory` commands). Each unit is stored
+**private by default** and only becomes retrievable as context
+(`MEMORY_APPROVED`) or exportable to a versioned training dataset
+(`TRAINING_APPROVED`) through explicit, audited consent. **A paper is never used
+for anything beyond its own review automatically** — nothing is submitted for
+training merely because it was reviewed.
+
+```toml
+[memory]
+backend = "none"                 # standalone default: memory off
+# backend = "qdrant"             # service mode vector backend (optional)
+# qdrant_url = "http://localhost:6333"
+# collection = "review_memory"
+require_approval = true          # nothing is promoted without explicit consent
+```
+
+Retrieved memory is **historical review experience, never current-paper
+evidence**. A past review saying "this claim is supported" does **not** prove
+the current claim is supported; retrieved context is always framed with a
+`HISTORICAL REVIEW MEMORY` marker and kept distinct from current-paper evidence.
+
+Qdrant is **optional**: standalone never requires it; service mode can use it
+for vector retrieval. Consent/approval always stays on the authoritative local
+store.
+
+---
+
+## Deployment (Helm)
+
+A Helm chart (`deploy/helm/paper-guard`) deploys the Paper Guard **service** to
+Kubernetes. It does **not** bundle Qdrant or Ollama — those are configured
+external endpoints, so the topology stays flexible:
+
+```text
+Kubernetes
+├── paper-guard (this chart)
+├── qdrant      (deployed/managed separately)
+└── ollama      (deployed separately, or an external LLM endpoint)
+```
+
+```bash
+helm install paper-guard deploy/helm/paper-guard \
+  --set llm.endpoint=https://api.openai.com/v1 \
+  --set llm.model=gpt-4o-mini \
+  --set llm.apiKeySecretName=paper-guard-api-key
+kubectl create secret generic paper-guard-api-key \
+  --from-literal=api-key='sk-...' \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+API keys live in a Kubernetes Secret referenced by name — **never** in
+`values.yaml`. Persistent storage for artifacts/ledger is configurable (PVC).
+See `deploy/helm/paper-guard/README.md` for the full parameter table.
 
 ---
 
@@ -308,18 +413,21 @@ paper-guard/
 ├── README.md
 ├── LICENSE
 ├── docs/                   # architecture documentation
-├── configs/                # default + LLM example configuration
+├── configs/                # default + OpenAI + Ollama example configuration
 ├── examples/               # sample manuscripts
+├── deploy/helm/paper-guard # Helm chart for the service mode
 ├── crates/
 │   ├── paper-guard-core/
-│   ├── paper-guard-cli/
+│   ├── paper-guard-llm/
 │   ├── paper-guard-parser/
-│   ├── paper-guard-renderer/
 │   ├── paper-guard-review/
 │   ├── paper-guard-agents/
-│   ├── paper-guard-llm/
+│   ├── paper-guard-renderer/
+│   ├── paper-guard-validation/
 │   ├── paper-guard-ledger/
-│   └── paper-guard-validation/
+│   ├── paper-guard-app/     # shared application layer (config, pipeline, memory)
+│   ├── paper-guard-service/ # optional HTTP service mode
+│   └── paper-guard-cli/
 └── tests/
 ```
 

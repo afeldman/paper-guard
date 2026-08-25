@@ -70,3 +70,16 @@ output_dir = ".paper-guard"
 seed = 42
 prompt_version = "v1"
 data_dir = ".paper-guard"
+
+# --- Service mode (optional) ------------------------------------------------
+[service]
+bind = "127.0.0.1:8080"
+allow_external_bind = false
+data_dir = ".paper-guard"
+
+# --- Review Memory (retrieval-based; PRIVATE by default) ---------------------
+[memory]
+backend = "none"
+qdrant_url = "http://localhost:6333"
+collection = "review_memory"
+require_approval = true

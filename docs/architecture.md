@@ -23,14 +23,42 @@ The system is split into focused crates so that no layer depends on the rest:
 | Crate                | Responsibility                                             |
 |----------------------|------------------------------------------------------------|
 | `paper-guard-core`   | Canonical paper model, findings, integrity domain, ledger types. Contains **no** I/O, LLM, or CLI code. |
-| `paper-guard-llm`    | `LlmProvider` trait + deterministic `MockProvider`.         |
+| `paper-guard-llm`    | `LlmProvider` trait + deterministic `MockProvider` + the real `OpenAICompatibleProvider`. |
 | `paper-guard-parser` | `Parser` trait + a LaTeX parser producing the canonical model. |
 | `paper-guard-review` | The five reviewers + the runner (parallel) + the judge.    |
 | `paper-guard-agents` | The revision engine (strictly scoped, auditable edits).    |
 | `paper-guard-renderer` | Emits a source representation from the canonical model.   |
 | `paper-guard-validation` | Text/structural validation after re-rendering.          |
 | `paper-guard-ledger` | Persistent review ledger and run tracking.                 |
-| `paper-guard-cli`    | Command-line interface orchestrating the pipeline.         |
+| `paper-guard-app`    | **Shared application layer**: config, pipeline orchestration, review memory. Used by both the CLI and the HTTP service. |
+| `paper-guard-service`| **Optional HTTP service mode**: minimal REST API over the shared application layer. |
+| `paper-guard-cli`    | Command-line interface (thin shell over `paper-guard-app`). |
+
+### 2.1b Standalone vs Service
+
+Both entry points drive the **same** application layer (`paper-guard-app`):
+the CLI is a thin shell, and the HTTP service is a thin API — neither
+re-implements review logic.
+
+```text
+  CLI ────────────────┐
+                      ▼
+                 paper-guard-app   (config, pipeline, review, judge, ledger, memory)
+                      ▲
+  HTTP API ───────────┘
+```
+
+**Standalone** (`paper-guard run paper.tex`): minimal dependencies; works fully
+offline with the `MockProvider`, and can use any OpenAI-compatible endpoint
+(OpenAI, Mammoth.ai, a local Ollama `/v1`, ...) purely via configuration.
+
+**Service** (`paper-guard serve`): a minimal HTTP API (`GET /health`,
+`POST /reviews`, `GET /reviews/{id}`, `GET /reviews/{id}/findings`,
+`POST /reviews/{id}/feedback`) that calls the same pipeline. It binds to
+loopback by default and refuses unauthenticated external exposure unless
+explicitly enabled (M3 §9); authentication/authorization is documented as
+out of scope. Persistence for artifacts/ledger is filesystem-backed and
+survives restarts via the Helm PVC.
 
 ### 2.2 Canonical Paper Model (in `paper-guard-core`)
 
@@ -163,6 +191,79 @@ is fail-closed: malformed (or partially-fabricated) LLM output becomes a
 might invent or misinterpret findings. An explicit empty array `[]` remains a
 legitimate "no findings" reply, and its structured output is preserved.
 
+
+### 2.11 Local LLM (Ollama)
+
+Ollama exposes an OpenAI-compatible `/v1` endpoint, so Paper Guard reaches a
+local model through the **same** `OpenAICompatibleProvider` as OpenAI and
+Mammoth.ai — there is no separate Ollama provider. Switching to a local model
+is a configuration change only ([`configs/paper-guard-ollama.toml`](../../configs/paper-guard-ollama.toml)):
+
+```toml
+[llm]
+provider = "openai-compatible"
+
+[providers.openai-compatible]
+base_url = "http://localhost:11434/v1"
+model = "llama3.2"
+# api_key_env is OPTIONAL for local Ollama; when absent/empty requests are
+# sent without an Authorization header.
+```
+
+Using a local model does **not** mean papers are used for training. A local
+Ollama run is a regular review; it changes nothing about privacy or training
+(see §2.13).
+
+### 2.12 Review Memory (retrieval-based learning, in `paper-guard-app::memory`)
+
+Review Memory is the M3 foundation for the future learning architecture. It
+stores **human-approved review units** (claim + context + finding + human
+decision; figure + caption + finding + decision; method / reference units) so a
+future review can retrieve similar past decisions as context. It is:
+
+- **Separate from the LLM provider.**
+- **Retrieval-based, not model-weight training.** No fine-tuning/LoRA in M3.
+- **Stored in meaningful units**, never whole papers, in a dedicated repository
+  (`ReviewMemoryRepository`). Backends: `FileReviewMemory` (offline JSON,
+  default) and `QdrantReviewMemory` (vector backend; see §2.14).
+
+Human feedback flows: a human reviewer records `ACCEPT` / `REJECT` / `MODIFY`
+on an AI finding (via the service `POST /reviews/{id}/feedback` or the CLI
+`memory` commands). The decision is stored **private by default** and only
+becomes retrievable as context (`MEMORY_APPROVED`) or exportable to a versioned
+training dataset (`TRAINING_APPROVED`) through explicit, audited consent.
+
+### 2.13 Privacy and training consent
+
+Papers may contain unpublished, confidential, proprietary, or personal research.
+Therefore **nothing is ever used for training automatically**:
+
+- Every memory candidate starts in `PRIVATE` (the default).
+- `PRIVATE` units cannot be retrieved as context or exported.
+- `MEMORY_APPROVED` units may be retrieved as context.
+- `TRAINING_APPROVED` units may be exported to a versioned, human-approved
+  dataset. A paper is never used for anything beyond its own review merely
+  because it was reviewed.
+
+Retrieved memory is **historical review experience**, never current-paper
+evidence. A memory entry saying "this claim is supported" does **not** prove the
+current claim is supported. Retrieved context is always framed with a
+`HISTORICAL REVIEW MEMORY` marker and kept strictly distinct from current-paper
+evidence (M3 §27).
+
+### 2.14 Qdrant + deployment
+
+Qdrant is the planned vector store for Review Memory and is **optional**:
+- **Standalone** never requires Qdrant (default `[memory] backend = "none"`).
+- **Service** can use a configured Qdrant for vector retrieval; consent/approval
+  always remains on the authoritative local store.
+- The Helm chart (`deploy/helm/paper-guard`) deploys the Paper Guard service and
+  **does not bundle Qdrant or Ollama** — those are configured external endpoints.
+
+The chart exposes configurable replicas, image, resources, service type/port,
+LLM provider/endpoint/model, Qdrant endpoint, persistent storage, and logging.
+API keys live in a Kubernetes Secret referenced by name — never in `values.yaml`.
+
 ## 3. Pipeline
 
 ```
@@ -219,3 +320,22 @@ rejection (`REVIEWER_OUTPUT_INVALID`), transient-vs-permanent retry behaviour,
 capability gating, and the absence of secrets in logs/config; an opt-in live
 harness (`crates/paper-guard-review/tests/live_provider.rs`) exercises one real
 reviewer against a real endpoint without ever running in CI.
+
+M3 adds:
+
+- **Ollama-compatibility contract tests** (`paper-guard-llm/tests/ollama_compat.rs`):
+  a mocked OpenAI-compatible endpoint verifies the keyless local path (no
+  Authorization header), keyless construction, and structured-response
+  pass-through for downstream `REVIEWER_OUTPUT_INVALID`.
+- **Service tests** (`paper-guard-service`): in-process HTTP tests verify
+  `GET /health`, `POST /reviews` (running the *same* shared pipeline), review
+  status/findings, loopback-bind enforcement, and human-feedback memory
+  recording (private by default).
+- **Memory tests** (`paper-guard-app`): verify the default `PRIVATE` state,
+  `MEMORY_APPROVED` retrieval, `TRAINING_APPROVED` export, that private/rejected
+  units are never retrievable as context, and that retrieved memory is always
+  framed as `HISTORICAL REVIEW MEMORY` (never current-paper evidence).
+
+The default `cargo test --workspace` requires **no** external service (no
+OpenAI/Mammoth.ai/Ollama/Qdrant/Kubernetes/internet); all integrations are
+either mocked, offline, or opt-in.

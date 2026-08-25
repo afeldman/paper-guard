@@ -246,10 +246,17 @@ async fn main() -> anyhow::Result<()> {
             let data_dir = cfg.service.data_dir.clone();
             let addr = bind.unwrap_or_else(|| cfg.service.bind.clone());
             let enforce_loopback = !cfg.service.allow_external_bind;
+            let memory = paper_guard_app::MemoryService::new(
+                &cfg.memory.backend,
+                &data_dir,
+                &cfg.memory.qdrant_url,
+                &cfg.memory.collection,
+            )?;
             let state = paper_guard_service::AppState {
                 config: std::sync::Arc::new(cfg),
                 data_dir,
                 enforce_loopback,
+                memory,
             };
             println!("paper-guard serve listening on {addr}");
             paper_guard_service::serve(&addr, state).await?;

@@ -36,8 +36,9 @@ pub struct FindingFeedback {
 }
 
 /// A handle to the review-memory side of the application layer.
+#[derive(Clone)]
 pub struct MemoryService {
-    repo: Box<dyn ReviewMemoryRepository>,
+    repo: std::sync::Arc<dyn ReviewMemoryRepository>,
 }
 
 impl MemoryService {
@@ -54,9 +55,9 @@ impl MemoryService {
         qdrant_url: &str,
         collection: &str,
     ) -> anyhow::Result<MemoryService> {
-        let repo: Box<dyn ReviewMemoryRepository> = match backend {
-            "none" => Box::new(DisabledMemory),
-            "file" => Box::new(FileReviewMemory::open(
+        let repo: std::sync::Arc<dyn ReviewMemoryRepository> = match backend {
+            "none" => std::sync::Arc::new(DisabledMemory),
+            "file" => std::sync::Arc::new(FileReviewMemory::open(
                 &std::path::Path::new(data_dir).join("review_memory.json"),
             )?),
             "qdrant" => {
@@ -77,7 +78,7 @@ impl MemoryService {
                 // Composition: file store handles consent & audit; qdrant handles
                 // vector retrieval of approved units. For M3, surfacing the file
                 // store keeps default behavior offline and safe.
-                Box::new(file)
+                std::sync::Arc::new(file)
             }
             other => {
                 return Err(anyhow::anyhow!(

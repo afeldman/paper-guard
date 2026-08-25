@@ -26,6 +26,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 
 use paper_guard_app::config::AppConfig;
+use paper_guard_app::memory_service::MemoryService;
 use paper_guard_ledger::{LedgerStore, RunRecord};
 use paper_guard_review::schema::FindingPayload;
 
@@ -40,6 +41,8 @@ pub struct AppState {
     /// When true, the service refuses to bind to a non-loopback address so it
     /// cannot silently expose an unauthenticated interface to the network.
     pub enforce_loopback: bool,
+    /// Review Memory (retrieval-based, private-by-default). See §19–§27.
+    pub memory: MemoryService,
 }
 
 // ---------------------------------------------------------------------------
@@ -99,11 +102,40 @@ pub struct ReviewerOutcomeDto {
 }
 
 /// Response for `GET /reviews/{run_id}/findings`.
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct FindingsResponse {
     pub run_id: String,
     pub findings: Vec<FindingPayload>,
     pub open_count: usize,
+}
+
+/// Request body for `POST /reviews/{run_id}/feedback`.
+///
+/// A human reviewer records their decision on an AI finding. This is stored as
+/// a Review Memory candidate that is **private by default** and only becomes
+/// retrievable/exportable through explicit approval (§23).
+#[derive(Debug, serde::Deserialize)]
+pub struct SubmitFeedbackRequest {
+    /// The reviewer kind that produced the finding (e.g. `evidence`).
+    pub reviewer_kind: String,
+    /// The text the finding was about (e.g. the claim / caption / method).
+    pub unit_text: String,
+    /// A hint about the unit type: `claim`, `figure`, `method`, `reference`.
+    pub unit_kind: Option<String>,
+    /// The finding text being assessed.
+    pub finding_text: Option<String>,
+    /// The human decision: `accept`, `reject`, or `modified`.
+    pub decision: String,
+    /// Optional free-text human feedback.
+    pub feedback: Option<String>,
+}
+
+/// Response for `POST /reviews/{run_id}/feedback`.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct FeedbackResponse {
+    /// The memory id of the stored (private) candidate.
+    pub memory_id: String,
+    pub approval_state: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -117,6 +149,7 @@ pub fn app(state: AppState) -> Router {
         .route("/reviews", post(submit_review))
         .route("/reviews/:run_id", get(review_status))
         .route("/reviews/:run_id/findings", get(review_findings))
+        .route("/reviews/:run_id/feedback", post(submit_feedback))
         .with_state(state)
 }
 
@@ -225,6 +258,62 @@ async fn review_findings(
     }))
 }
 
+/// `POST /reviews/{run_id}/feedback` — record a human decision on a finding.
+///
+/// The decision is stored as a **private-by-default** Review Memory candidate.
+/// It is never promoted to retrieval/export without explicit consent.
+async fn submit_feedback(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Json(req): Json<SubmitFeedbackRequest>,
+) -> Result<(StatusCode, Json<FeedbackResponse>), (StatusCode, Json<serde_json::Value>)> {
+    let decision = match req.decision.as_str() {
+        "accept" => paper_guard_app::MemoryResolution::Accept,
+        "reject" => paper_guard_app::MemoryResolution::Reject,
+        "modified" => paper_guard_app::MemoryResolution::Modified,
+        other => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": format!("invalid decision `{other}`; expected accept|reject|modified") })),
+            ))
+        }
+    };
+    let kind = match req.unit_kind.as_deref().unwrap_or("claim") {
+        "figure" => paper_guard_app::MemoryKind::Figure,
+        "method" => paper_guard_app::MemoryKind::Method,
+        "reference" => paper_guard_app::MemoryKind::Reference,
+        _ => paper_guard_app::MemoryKind::Claim,
+    };
+    let unit = paper_guard_app::ReviewMemoryUnit {
+        reviewer_kind: req.reviewer_kind.clone(),
+        kind,
+        text: req.unit_text.clone(),
+        finding: req.finding_text.unwrap_or_else(|| "".into()),
+        context: String::new(),
+    };
+    let feedback = paper_guard_app::FindingFeedback {
+        finding_id: run_id.clone(),
+        decision,
+        feedback: req.feedback.unwrap_or_default(),
+    };
+    let entry = state
+        .memory
+        .record_feedback(&run_id, unit, &feedback, "service-human-feedback")
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+        })?;
+    Ok((
+        StatusCode::OK,
+        Json(FeedbackResponse {
+            memory_id: entry.memory_id.clone(),
+            approval_state: entry.approval_state.describe().to_string(),
+        }),
+    ))
+}
+
 /// Build a versioned [`FindingPayload`] DTO from a ledger finding record.
 fn record_to_payload(f: &paper_guard_ledger::FindingRecord) -> FindingPayload {
     let severity = serde_json::to_string(&f.severity)
@@ -308,11 +397,20 @@ mod tests {
         let mut cfg = AppConfig::default();
         cfg.reproducibility.data_dir = dir.path().to_str().unwrap().to_string();
         cfg.service.data_dir = dir.path().to_str().unwrap().to_string();
+        cfg.memory.backend = "file".into();
+        let memory = MemoryService::new(
+            &cfg.memory.backend,
+            dir.path().to_str().unwrap(),
+            "",
+            "review_memory",
+        )
+        .unwrap();
         (
             AppState {
                 config: Arc::new(cfg),
                 data_dir: dir.path().to_str().unwrap().to_string(),
                 enforce_loopback: true,
+                memory,
             },
             dir,
         )
@@ -426,5 +524,62 @@ We show that the method reduces latency. INSUFFICIENT_EVIDENCE
         assert!(is_loopback_bind("localhost:8080"));
         assert!(!is_loopback_bind("0.0.0.0:8080"));
         assert!(!is_loopback_bind("192.168.1.5:8080"));
+    }
+
+    #[tokio::test]
+    async fn feedback_is_recorded_as_private_memory() {
+        // A human rejecting a finding must be stored as a PRIVATE memory
+        // candidate — retrievable/exportable only after explicit consent.
+        let (state, _dir) = test_state();
+        let body = serde_json::json!({
+            "reviewer_kind": "evidence",
+            "unit_text": "the method reduces latency",
+            "unit_kind": "claim",
+            "finding_text": "claim unsupported",
+            "decision": "reject",
+            "feedback": "Figure 6 supports this claim."
+        });
+        let resp = app(state.clone())
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/reviews/run-001/feedback")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let fb: FeedbackResponse = serde_json::from_slice(&bytes).unwrap();
+        assert!(fb.memory_id.starts_with("mem-"));
+        assert_eq!(fb.approval_state, "private");
+
+        // Without consent, the unit is not retrievable as context.
+        let ctx = state.memory.retrieve_context("the method reduces latency", 10).unwrap();
+        assert!(ctx.is_empty());
+    }
+
+    #[tokio::test]
+    async fn invalid_feedback_decision_is_rejected() {
+        let (state, _dir) = test_state();
+        let body = serde_json::json!({
+            "reviewer_kind": "evidence",
+            "unit_text": "x",
+            "decision": "maybe"
+        });
+        let resp = app(state)
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/reviews/run-001/feedback")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 }

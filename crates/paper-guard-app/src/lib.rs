@@ -20,10 +20,11 @@ pub mod pipeline;
 
 pub use config::AppConfig;
 pub use memory::{
-    ApprovalState, Consent, ConsentGrant, FileReviewMemory, MemoryResolution,
+    ApprovalState, Consent, ConsentGrant, FileReviewMemory, MemoryKind, MemoryResolution,
     QdrantReviewMemory, ReviewMemoryEntry, ReviewMemoryRepository, ReviewMemorySearch,
     ReviewMemoryUnit,
 };
+pub use memory_service::{FindingFeedback, MemoryService};
 pub use pipeline::{run_pipeline, RunOutput};
 
 /// A convenience service that brokers between a review run and review memory:

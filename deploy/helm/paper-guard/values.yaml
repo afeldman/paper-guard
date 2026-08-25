@@ -1,0 +1,76 @@
+# -- number of Paper Guard service replicas
+replicas: 1
+
+image:
+  # -- container image
+  repository: paper-guard/paper-guard
+  # -- image tag (tag = chart appVersion if omitted)
+  tag: ""
+  # -- image pull policy
+  pullPolicy: IfNotPresent
+
+service:
+  # -- kubernetes Service type (ClusterIP, NodePort, LoadBalancer)
+  type: ClusterIP
+  # -- service port exposed to the cluster
+  port: 80
+  # -- container (target) port the service listens on
+  targetPort: 8080
+
+# -- resource requests/limits for the Paper Guard container
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+# -- environment to inject into the Paper Guard container (in addition to the
+# LLM/Qdrant config below). Add tuning/logging env vars here.
+extraEnv: []
+# - name: RUST_LOG
+#   value: info
+
+logging:
+  # -- enable JSON structured logging; secrets are never logged
+  format: json
+  level: info
+
+llm:
+  # -- LLM provider kind: "mock" (offline/deterministic) or "openai-compatible"
+  provider: openai-compatible
+  # -- endpoint base URL (OpenAI, Mammoth.ai, or a local Ollama /v1 endpoint)
+  endpoint: https://api.openai.com/v1
+  # -- model name (configuration-driven, never hard-coded in code)
+  model: gpt-4o-mini
+  # -- structured JSON output support
+  structuredOutput: true
+  # -- multimodal vision support
+  vision: false
+  # -- name of a Kubernetes Secret key holding the API key. If empty, requests
+  # are sent without an Authorization header (e.g. keyless local Ollama).
+  apiKeySecretName: ""
+  apiKeySecretKey: "api-key"
+
+qdrant:
+  # -- Qdrant endpoint (external/configured; not bundled)
+  endpoint: http://qdrant:6333
+  # -- Qdrant collection for review memory
+  collection: review_memory
+
+persistence:
+  # -- enable a persistent volume for ledger/manuscript/memory artifacts
+  enabled: true
+  # -- storage class for the PVC ("" uses the cluster default)
+  storageClass: ""
+  # -- requested persistent storage size
+  size: 1Gi
+
+# -- optional pod security context
+podSecurityContext: {}
+  # fsGroup: 1000
+
+# -- optional container security context
+securityContext: {}
+  # runAsNonRoot: true

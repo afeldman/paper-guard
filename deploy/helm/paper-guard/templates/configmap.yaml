@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "paper-guard.fullname" . }}
+  labels:
+    {{- include "paper-guard.labels" . | nindent 4 }}
+data:
+  # The Paper Guard runtime configuration. The LLM API key is NEVER placed here;
+  # it is injected from a Kubernetes Secret as an environment variable (see
+  # secret.yaml / deployment.yaml).
+  paper-guard.toml: |
+    [project]
+    name = "paper-guard"
+
+    [llm]
+    provider = "{{ .Values.llm.provider }}"
+
+    [providers.openai-compatible]
+    base_url = "{{ .Values.llm.endpoint }}"
+    model = "{{ .Values.llm.model }}"
+    # The API key is provided via env var (api_key_env below); if empty the
+    # request is sent without an Authorization header (keyless local Ollama).
+    api_key_env = "{{ if .Values.llm.apiKeySecretName }}PAPER_GUARD_API_KEY{{ else }}OLLAMA_API_KEY_OPTIONAL{{ end }}"
+    timeout_seconds = 120
+    max_retries = 2
+    structured_output = {{ .Values.llm.structuredOutput }}
+    vision = {{ .Values.llm.vision }}
+
+    [judge]
+    model = "{{ .Values.llm.model }}"
+    require_human_approval_for_major = true
+
+    [reproducibility]
+    seed = 42
+    prompt_version = "v1"
+    data_dir = "/app/data"
+
+    [service]
+    bind = "0.0.0.0:8080"
+    allow_external_bind = true
+    data_dir = "/app/data"
+
+    [memory]
+    backend = "{{ if .Values.qdrant.endpoint }}qdrant{{ else }}none{{ end }}"
+    qdrant_url = "{{ .Values.qdrant.endpoint }}"
+    collection = "{{ .Values.qdrant.collection }}"
+    require_approval = true

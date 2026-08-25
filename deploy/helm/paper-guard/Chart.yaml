@@ -1,0 +1,20 @@
+apiVersion: v2
+name: paper-guard
+description: |
+  Paper Guard — scientific quality-assurance and pre-submission review for
+  already-written papers. This chart deploys the Paper Guard HTTP service. It
+  does NOT bundle Qdrant or Ollama; those are configured as external endpoints.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.22.0-0"
+keywords:
+  - scientific
+  - review
+  - paper
+  - qa
+home: https://github.com/paper-guard/paper-guard
+sources:
+  - https://github.com/paper-guard/paper-guard
+maintainers:
+  - name: Paper Guard Contributors

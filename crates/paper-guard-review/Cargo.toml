@@ -1,0 +1,23 @@
+[package]
+name = "paper-guard-review"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Reviewer and Judge agents for Paper Guard."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+paper-guard-core.workspace = true
+paper-guard-llm.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }
+paper-guard-parser = { workspace = true }
+paper-guard-agents = { workspace = true }
+paper-guard-ledger = { workspace = true }

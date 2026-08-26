@@ -48,14 +48,14 @@ impl MdnsServiceDiscovery {
         }
     }
 
-    /// Build a provider for a custom DNS-SD service type (e.g. a scoped
-    /// `.lab.local.` domain). The type must end in `.local.`.
-    pub fn with_service_type(service_type: &str) -> Self {
+    /// Override the DNS-SD service type to browse (e.g. a scoped `.lab.local.`
+    /// domain). The value need not carry a trailing dot; it is normalised.
+    pub fn with_service_type(mut self, service_type: &str) -> Self {
         let t = service_type.trim().trim_end_matches('.');
-        Self {
-            service_type: format!("{t}.").into(),
-            timeout: DEFAULT_TIMEOUT,
+        if !t.is_empty() {
+            self.service_type = format!("{t}.").into();
         }
+        self
     }
 
     /// Override the receive timeout.

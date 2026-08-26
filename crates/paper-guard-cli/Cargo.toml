@@ -30,3 +30,4 @@ paper-guard-validation.workspace = true
 paper-guard-app.workspace = true
 paper-guard-service.workspace = true
 paper-guard-client.workspace = true
+paper-guard-discovery.workspace = true

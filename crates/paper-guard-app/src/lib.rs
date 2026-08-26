@@ -18,7 +18,7 @@ pub mod logging;
 pub mod memory;
 pub mod pipeline;
 
-pub use config::{AppConfig, MemoryMode, ServerConfig};
+pub use config::{AppConfig, DiscoverySectionConfig, MemoryMode, ServerConfig};
 pub use memory::{
     cosine_similarity, try_cosine, ApprovalState, Consent, ConsentGrant, EmbeddingProvider,
     EmbeddingProviderConfig, FileReviewMemory, MemoryAuthzContext, MemoryHit, MemoryKind,

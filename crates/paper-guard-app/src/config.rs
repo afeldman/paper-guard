@@ -23,6 +23,7 @@ pub struct AppConfig {
     pub service: ServiceConfig,
     pub memory: MemoryConfig,
     pub server: ServerConfig,
+    pub discovery: DiscoverySectionConfig,
 }
 
 /// Top-level LLM provider selection.
@@ -284,6 +285,43 @@ impl Default for ServerConfig {
             url: String::new(),
             auth_token_env: None,
             timeout_seconds: default_server_timeout(),
+        }
+    }
+}
+
+/// The `[discovery]` section — optional LAN (mDNS/DNS-SD) service discovery.
+///
+/// Discovery is **disabled by default** so Paper Guard never probes the network
+/// implicitly. When enabled, discovery only *lists* and *verifies* Paper Guard
+/// services; it never authorises a manuscript upload. A manuscript is only ever
+/// sent to a remote service when remote execution has been explicitly selected.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DiscoverySectionConfig {
+    /// Master switch. `false` disables all discovery regardless of `mode`.
+    pub enabled: bool,
+    /// Discovery mode: `off`, `manual`, or `auto`. Unknown values fail closed
+    /// to `off`.
+    pub mode: String,
+    /// Optional DNS-SD service type to browse for; usually left at the default
+    /// `_paper-guard._tcp.local.`.
+    pub service_type: String,
+    /// How long (in milliseconds) to wait for mDNS responses.
+    pub timeout_ms: u64,
+    /// Optional exact hostname (e.g. `paper-guard.lab.local`) that Auto mode
+    /// may prefer when multiple services are present. Never "first response
+    /// wins".
+    pub preferred_service: String,
+}
+
+impl Default for DiscoverySectionConfig {
+    fn default() -> Self {
+        DiscoverySectionConfig {
+            enabled: false,
+            mode: "off".into(),
+            service_type: "_paper-guard._tcp.local.".into(),
+            timeout_ms: 3000,
+            preferred_service: String::new(),
         }
     }
 }
@@ -557,5 +595,34 @@ timeout_seconds = 60
         // environment variable *name* is allowed.
         assert!(!json.contains("sk-"));
         assert!(json.contains("OPENAI_API_KEY"));
+    }
+
+    #[test]
+    fn discovery_config_defaults_to_disabled() {
+        let cfg = AppConfig::default();
+        // Discovery is off by default so the client never probes the network
+        // implicitly.
+        assert!(!cfg.discovery.enabled);
+        assert_eq!(cfg.discovery.mode, "off");
+        assert_eq!(cfg.discovery.timeout_ms, 3000);
+        assert_eq!(cfg.discovery.service_type, "_paper-guard._tcp.local.");
+        assert_eq!(cfg.discovery.preferred_service, "");
+    }
+
+    #[test]
+    fn discovery_config_roundtrips() {
+        let src = r#"
+[discovery]
+enabled = true
+mode = "manual"
+timeout_ms = 5000
+service_type = "_paper-guard._tcp.local."
+preferred_service = "paper-guard.lab.local"
+"#;
+        let cfg: AppConfig = toml::from_str(src).unwrap();
+        assert!(cfg.discovery.enabled);
+        assert_eq!(cfg.discovery.mode, "manual");
+        assert_eq!(cfg.discovery.timeout_ms, 5000);
+        assert_eq!(cfg.discovery.preferred_service, "paper-guard.lab.local");
     }
 }

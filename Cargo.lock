@@ -1395,6 +1395,7 @@ dependencies = [
  "paper-guard-app",
  "paper-guard-client",
  "paper-guard-core",
+ "paper-guard-discovery",
  "paper-guard-ledger",
  "paper-guard-llm",
  "paper-guard-parser",

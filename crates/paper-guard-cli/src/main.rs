@@ -137,6 +137,20 @@ enum Command {
         #[arg(long)]
         server: Option<String>,
     },
+    /// Discover Paper Guard services on the local network via mDNS/DNS-SD.
+    ///
+    /// Lists and verifies candidate services through `GET /health`. This never
+    /// uploads any manuscript and never selects a service automatically unless
+    /// `[discovery] mode = "auto"` and `preferred_service` are configured.
+    Discover {
+        /// Path to a `paper-guard.toml` (optional).
+        #[arg(long)]
+        config: Option<String>,
+        /// Force discovery even when `[discovery]` is disabled in the config.
+        /// When set, discovery runs in manual (list-only) mode for a single run.
+        #[arg(long)]
+        force: bool,
+    },
     /// Interact with Review Memory (retrieval-approved units only).
     Memory {
         /// Sub-command.
@@ -392,6 +406,9 @@ async fn main() -> anyhow::Result<()> {
                 );
             }
         }
+        Command::Discover { config, force } => {
+            run_discover(config.as_deref(), force).await?;
+        }
         Command::Memory { command } => match command {
             MemoryCommand::List { config } => {
                 let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
@@ -500,6 +517,130 @@ async fn main() -> anyhow::Result<()> {
     }
     Ok(())
 }
+// ---------------------------------------------------------------------------
+// Discovery
+// ---------------------------------------------------------------------------
+
+/// Run `paper-guard discover`: browse the LAN for Paper Guard services via
+/// mDNS/DNS-SD, verify each candidate through `GET /health`, and report the
+/// healthy, compatible services. **No manuscript is ever uploaded by this
+/// command.**
+async fn run_discover(config_path: Option<&str>, force: bool) -> anyhow::Result<()> {
+    use paper_guard_discovery::model::DiscoveryConfig as DiscCfg;
+    use paper_guard_discovery::verify::verify_and_classify;
+    use paper_guard_discovery::ServiceDiscovery;
+
+    let cfg = AppConfig::load(config_path.map(PathBuf::from).as_deref())?;
+
+    let disc: DiscCfg = DiscCfg {
+        enabled: cfg.discovery.enabled,
+        mode: cfg.discovery.mode.clone(),
+        service_type: cfg.discovery.service_type.clone(),
+        timeout_ms: cfg.discovery.timeout_ms,
+        preferred_service: cfg.discovery.preferred_service.clone(),
+    };
+
+    // Discovery is off unless `[discovery]` enables it, or the user forced a
+    // one-shot manual browse. We never probe the network implicitly.
+    if !force && !disc.enabled {
+        println!("LAN discovery is disabled. Enable it in your config:");
+        println!("");
+        println!("  [discovery]");
+        println!("  enabled = true");
+        println!("  mode = \"manual\"   # or \"auto\"");
+        println!("");
+        println!("then re-run `paper-guard discover`. (Use --force to run once.)");
+        return Ok(());
+    }
+
+    rust_loguru::info!("event=discovery_started | mode={:?}", disc.effective_mode());
+    println!("Searching local network for Paper Guard services…");
+
+    let provider = paper_guard_discovery::MdnsServiceDiscovery::new()
+        .with_service_type(&disc.service_type)
+        .with_timeout(std::time::Duration::from_millis(disc.timeout_ms));
+    let candidates = provider.discover().await?;
+
+    rust_loguru::info!("event=discovery_completed | candidates={}", candidates.len());
+
+    if candidates.is_empty() {
+        println!("No Paper Guard services found on the local network.");
+        return Ok(());
+    }
+
+    // Verify each candidate through GET /health. This performs no manuscript
+    // transmission and uses a short, token-free client.
+    let our_version = env!("CARGO_PKG_VERSION");
+    let mut healthy = 0usize;
+    let mut rejected = 0usize;
+    let mut incompatible = 0usize;
+
+    println!("Found:");
+    for cand in &candidates {
+        rust_loguru::info!(
+            "event=candidate_found | name={} | host={} | addr={} | port={}",
+            cand.name,
+            cand.hostname,
+            cand.address,
+            cand.port
+        );
+        let verified = verify_and_classify(cand.clone(), our_version).await;
+        match verified.outcome {
+            paper_guard_discovery::verify::VerificationOutcome::Verified => {
+                rust_loguru::info!(
+                    "event=candidate_verified | name={} | version={}",
+                    verified.endpoint.name,
+                    verified.endpoint.version
+                );
+                healthy += 1;
+                print_endpoint(&verified.endpoint, "healthy");
+                println!("  Status: healthy");
+            }
+            paper_guard_discovery::verify::VerificationOutcome::IncompatibleVersion => {
+                rust_loguru::warn!(
+                    "event=candidate_rejected | reason=incompatible_version | name={}",
+                    verified.endpoint.name
+                );
+                incompatible += 1;
+                print_endpoint(&verified.endpoint, "incompatible-version");
+                println!("  Status: INCOMPATIBLE_SERVICE_VERSION");
+            }
+            paper_guard_discovery::verify::VerificationOutcome::Rejected => {
+                rust_loguru::warn!(
+                    "event=candidate_rejected | reason=health_failed | name={}",
+                    verified.endpoint.name
+                );
+                rejected += 1;
+                print_endpoint(&verified.endpoint, "unreachable");
+                println!("  Status: unreachable / not a Paper Guard service");
+            }
+        }
+    }
+
+    println!();
+    println!(
+        "Summary: {healthy} healthy, {incompatible} incompatible, {rejected} unreachable.          Discovery never uploads a manuscript."
+    );
+    Ok(())
+}
+
+/// Print an endpoint's identifying fields (never secrets, never manuscript
+/// contents).
+fn print_endpoint(ep: &paper_guard_discovery::ServiceEndpoint, status: &str) {
+    println!();
+    println!("  Name:     {}", ep.name);
+    println!("  Host:     {}", ep.hostname);
+    println!("  Address:  {}", ep.address);
+    println!("  Port:     {}", ep.port);
+    if !ep.version.is_empty() {
+        println!("  Version:  {}", ep.version);
+    }
+    if !ep.capabilities.is_empty() {
+        println!("  Capabilities: {}", ep.capabilities.join(", "));
+    }
+    let _ = status;
+}
+
 // ---------------------------------------------------------------------------
 // Local vs remote mode helpers
 // ---------------------------------------------------------------------------

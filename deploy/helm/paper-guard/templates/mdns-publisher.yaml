@@ -48,7 +48,7 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          image: "{{ .Values.discovery.publisher.repository }}:{{ .Values.discovery.publisher.tag | default (printf "0.5.0") }}"
+          image: "{{ .Values.discovery.publisher.repository }}:{{ .Values.discovery.publisher.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             - name: PAPER_GUARD_HOSTNAME

@@ -5,8 +5,8 @@ description: |
   already-written papers. This chart deploys the Paper Guard HTTP service. It
   does NOT bundle Qdrant or Ollama; those are configured as external endpoints.
 type: application
-version: 0.5.0
-appVersion: "0.5.0"
+version: 0.6.0
+appVersion: "0.6.0"
 kubeVersion: ">=1.22.0-0"
 keywords:
   - scientific

@@ -79,6 +79,48 @@ memory:
   # -- Optional team id for sharing approved memory across a team.
   teamId: ""
 
+# -- LAN (mDNS/DNS-SD) service discovery. This configures the Paper Guard
+# service's own [discovery] section (used by `paper-guard discover`) and, when
+# `publisher.enabled` is true, deploys a *separate* mDNS publisher pod that
+# advertises `paper-guard.local` so clients on the LAN can find the service.
+# mDNS is NOT run inside the Paper Guard app container.
+discovery:
+  # -- Whether the Paper Guard service should accept/emit discovery config.
+  # False by default so nothing probes the network implicitly.
+  enabled: false
+  # -- Discovery mode: off | manual | auto.
+  mode: off
+  # -- DNS-SD service type to advertise/browse (usually leave default).
+  serviceType: "_paper-guard._tcp.local."
+  # -- Hostname to advertise for the service (used by the optional publisher).
+  hostname: "paper-guard.local"
+  # -- Optional exact hostname that Auto mode may prefer when multiple
+  # services are present. Never "first response wins".
+  preferredService: ""
+  # -- Optional separate mDNS publisher pod (default false). This is an
+  # infrastructure component with its own securityContext; it is never merged
+  # into the Paper Guard container. Set true only if you run multicast on the
+  # host network and want clients to discover the service by hostname.
+  publisher:
+    # -- Deploy the separate mDNS publisher pod.
+    enabled: false
+    # -- Image used for the publisher. Override with an image that provides an
+    # mDNS/avahi bridge suitable for your node network. The referenced image
+    # must advertise `paper-guard.local` -> the Kubernetes Service address.
+    repository: "paper-guard/mdns-bridge"
+    tag: ""
+    # -- Publisher pod security context (must be run with multicast/HostNetwork
+    # capabilities; scoped to this pod only, never the app).
+    securityContext:
+      capabilities:
+        add: ["NET_ADMIN", "NET_RAW"]
+      privileged: false
+    # -- Whether the publisher needs hostNetwork (true when the CNI blocks
+    # multicast). Scope: publisher only, never the Paper Guard app.
+    hostNetwork: false
+    # -- Extra environment variables for the publisher pod.
+    extraEnv: []
+
 persistence:
   # -- enable a persistent volume for ledger/manuscript/memory artifacts
   enabled: true

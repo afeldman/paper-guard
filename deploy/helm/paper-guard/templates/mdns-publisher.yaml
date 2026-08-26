@@ -1,0 +1,67 @@
+{{- if .Values.discovery.publisher.enabled }}
+# -----------------------------------------------------------------------------
+# OPTIONAL separate mDNS publisher (DISABLED by default).
+#
+# This is a SEPARATE infrastructure pod that advertises the Paper Guard
+# Kubernetes Service over mDNS/DNS-SD so LAN clients can discover it. It is
+# deliberately never merged into the Paper Guard application container: the app
+# stays unprivileged and completely independent of mDNS. A deployment must
+# explicitly opt in via `discovery.publisher.enabled = true`.
+#
+# The published address should be the externally reachable Kubernetes Service
+# address (ClusterIP, NodePort, LoadBalancer, or Ingress). Because mDNS needs
+# multicast, this pod may require elevated networking; those capabilities are
+# scoped to THIS pod only and never to the Paper Guard app.
+#
+# Bring your own image that bridges `paper-guard.local` to the Service address
+# (e.g. an avahi/mdns-sd wrapper). The image must advertise the DNS-SD service
+# type `_paper-guard._tcp.local.` with TXT `version=<appVersion>` and point at
+# the Kubernetes Service address.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "paper-guard.fullname" . }}-mdns-publisher
+  labels:
+    {{- include "paper-guard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mdns-publisher
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "paper-guard.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mdns-publisher
+  template:
+    metadata:
+      labels:
+        {{- include "paper-guard.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: mdns-publisher
+    spec:
+      # hostNetwork is scoped to this publisher pod only; the Paper Guard app
+      # deployment never sets it. Required when the cluster CNI does not
+      # forward multicast to the pod interface.
+      {{- if .Values.discovery.publisher.hostNetwork }}
+      hostNetwork: true
+      {{- end }}
+      containers:
+        - name: mdns-publisher
+          {{- with .Values.discovery.publisher.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          image: "{{ .Values.discovery.publisher.repository }}:{{ .Values.discovery.publisher.tag | default (printf "0.5.0") }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: PAPER_GUARD_HOSTNAME
+              value: "{{ .Values.discovery.hostname }}"
+            - name: PAPER_GUARD_SERVICE_TYPE
+              value: "{{ .Values.discovery.serviceType }}"
+            - name: PAPER_GUARD_SERVICE_PORT
+              value: "{{ .Values.service.port }}"
+            - name: PAPER_GUARD_VERSION
+              value: "{{ .Chart.AppVersion }}"
+          {{- with .Values.discovery.publisher.extraEnv }}
+          {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+{{- end }}

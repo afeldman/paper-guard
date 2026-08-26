@@ -59,3 +59,13 @@ data:
     {{- if .Values.memory.teamId }}
     team_id = "{{ .Values.memory.teamId }}"
     {{- end }}
+{{- if .Values.discovery.enabled }}
+    [discovery]
+    enabled = true
+    mode = "{{ .Values.discovery.mode }}"
+    service_type = "{{ .Values.discovery.serviceType }}"
+    timeout_ms = 3000
+    {{- if .Values.discovery.preferredService }}
+    preferred_service = "{{ .Values.discovery.preferredService }}"
+    {{- end }}
+{{- end }}

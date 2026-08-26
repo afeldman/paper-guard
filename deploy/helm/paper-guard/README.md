@@ -90,3 +90,59 @@ Kubernetes Secret referenced by name. Either:
 ```bash
 helm uninstall paper-guard
 ```
+
+## LAN discovery (mDNS/DNS-SD) — optional and off by default
+
+Paper Guard supports provider-independent LAN discovery via mDNS/DNS-SD so that
+clients on the same network can find the service without knowing the node IP,
+Service/NodePort, or Ingress address.
+
+By default discovery is **disabled** — the chart neither probes the network nor
+advertises anything. The Paper Guard application container **never** runs an
+mDNS/Avahi daemon and never requires `hostNetwork`, `serviceAccount`, or
+privileged networking. The app stays unprivileged and independent of mDNS.
+
+### Enable client-side discovery in the appConfig
+
+```bash
+helm install paper-guard deploy/helm/paper-guard \
+  --set discovery.enabled=true \
+  --set discovery.mode=manual
+```
+
+This writes a `[discovery]` section into the service's `paper-guard.toml`
+(`manual` lists/verifies services; `auto` may select one, but only with explicit
+user confirmation before any manuscript is transmitted — discovery never
+authorises an upload).
+
+### Optional publisher pod (separate infrastructure component)
+
+If you also want the service *advertised* on the LAN (so clients can reach it by
+hostname), deploy a **separate** mDNS publisher pod. It is a distinct Deployment
+with its own security context, never merged into the Paper Guard container:
+
+```bash
+helm install paper-guard deploy/helm/paper-guard \
+  --set discovery.publisher.enabled=true \
+  --set discovery.publisher.repository=your/mdns-bridge
+```
+
+The publisher advertises `paper-guard.local` (see `discovery.hostname`, default
+`paper-guard.local`) using the DNS-SD service type `_paper-guard._tcp.local.`
+and a TXT `version` equal to the chart `appVersion`. Because mDNS requires
+multicast, the publisher pod may need `hostNetwork`/`NET_ADMIN`+`NET_RAW`; those
+capabilities are scoped to that pod only and are **never** requested by the
+Paper Guard app.
+
+### Discovery ≠ authorization
+
+Discovery only tells a client "a Paper Guard service exists". It does **not**
+grant permission to submit a manuscript. Paper Guard never sends a manuscript to
+a discovered service unless remote execution has been explicitly selected.
+
+### Network assumptions
+
+mDNS operates within the local multicast domain. It may not work across routed
+networks, VPNs, VLAN boundaries, Wi-Fi client isolation, firewalls blocking
+multicast, or Kubernetes CNI boundaries. Paper Guard fails gracefully when mDNS
+is unavailable (an empty result is not an error).

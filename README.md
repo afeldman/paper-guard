@@ -64,6 +64,9 @@ adversarial tests guard the system).
 - **Multimodal support** — the Figure/Table reviewer can receive images.
 - **Structured JSON logging** via `rust_loguru`, with parallel agent runs
   attributable per `run_id` / `agent` / `stage`.
+- **Optional LAN discovery** (mDNS/DNS-SD) — provider-independent, off by
+  default; `paper-guard discover` lists & verifies Paper Guard services without
+  ever uploading a manuscript.
 
 ---
 
@@ -118,6 +121,7 @@ paper-guard report  [<run>] [--config PATH]
 paper-guard feedback <run> <finding-id> --decision {accept|reject|modified} [--feedback TEXT]
 paper-guard serve   [--config PATH] [--bind ADDR]        # optional HTTP service
 paper-guard health  [--config PATH] [--server URL]       # query a remote service
+paper-guard discover [--config PATH] [--force]           # LAN mDNS/DNS-SD discovery
 paper-guard memory list               # list review-memory units + approval state
 paper-guard memory show <id>          # show full detail of one unit
 paper-guard memory approve-memory <id> [--actor NAME]
@@ -144,6 +148,7 @@ GET  /reviews/{run_id}              → review status/result
 GET  /reviews/{run_id}/findings     → review findings
 POST /reviews/{run_id}/feedback     → record human ACCEPT/REJECT/MODIFY
 GET  /memory                        → list memory units + approval state
+GET  /discovery/metadata              → service identity for LAN discovery
 GET  /memory/{id}                   → fetch a memory unit
 POST /memory/{id}/approve           → explicit approval (→ retrievable context)
 POST /memory/{id}/reject            → explicit rejection
@@ -157,6 +162,94 @@ Responses are stable JSON (API DTOs), decoupled from internal Rust types
 (M3 §8). Authentication/authorization is out of scope for M3 and documented as
 a limitation; the loopback-only bind is the safeguard. Uploaded manuscripts are
 treated as untrusted data and never logged.
+
+## LAN service discovery (mDNS / DNS-SD)
+
+Paper Guard has provider-independent, **optional** LAN discovery so a service
+running in a local cluster can be found by machines on the same network without
+entering a node IP, Service/NodePort, or Ingress address.
+
+- The discovery abstraction is a [`ServiceDiscovery`] trait (implemented by an
+  mDNS/DNS-SD backend and a deterministic mock). No Avahi/mDNS logic lives in
+  the Paper Guard application.
+- **Discovery is off by default.** The client never probes the network
+  implicitly and never sends a manuscript to a found service automatically.
+- `paper-guard discover` lists and verifies Paper Guard services found on the
+  LAN, then exits — it **never uploads** anything.
+
+### Enabling discovery
+
+```toml
+[discovery]
+enabled = true
+mode = "manual"     # or "auto"
+timeout_ms = 3000   # optional
+# preferred_service = "paper-guard.lab.local"   # explicit selection in Auto
+```
+
+- `off` (default): discovery is disabled; `paper-guard discover` explains how to
+  enable it.
+- `manual`: discovery runs only when explicitly invoked (`paper-guard discover`).
+  It lists/verifies services but never selects or uploads anything.
+- `auto`: discovery may run when explicitly requested and, with a configured
+  `preferred_service`, may select a single verified service — but only with
+  explicit user confirmation before any manuscript is transmitted.
+
+Use `paper-guard discover --force` to run a one-off manual browse even when
+discovery is disabled in the config.
+
+Example output:
+
+```
+Searching local network for Paper Guard services…
+Found:
+
+  Name:     paper-guard
+  Host:     paper-guard.local
+  Address:  192.168.1.50
+  Port:     8080
+  Version:  0.5.0
+  Status:   healthy
+
+Summary: 1 healthy, 0 incompatible, 0 unreachable. Discovery never uploads a
+manuscript.
+```
+
+If nothing is found, it prints `No Paper Guard services found on the local
+network.` and exits 0 (not an error).
+
+### Multiple services
+
+When several Paper Guard services are reachable, the client lists **all** of
+them. It never picks "first response wins". Automatic selection requires an
+explicit `[discovery] preferred_service` that matches exactly one verified
+candidate.
+
+### Security model
+
+> **Discovery ≠ authorization.** Finding a Paper Guard service never authorises
+> an upload. Paper Guard **never** sends a manuscript to a discovered service
+> unless remote execution has been explicitly selected.
+
+Discovered endpoints are treated as **untrusted input**: records are validated
+and sanitised (a hostile record cannot inject a scheme, port, path, or
+credentials into the constructed URL, and cannot cause command execution,
+filesystem access, or secret disclosure). Candidates are cross-checked through
+`GET /health`; a service that does not self-identify as Paper Guard is rejected,
+and obvious version incompatibilities are reported as
+`INCOMPATIBLE_SERVICE_VERSION` rather than proceeding.
+
+Discovery never logs manuscript contents, API keys, or bearer tokens.
+
+### Network assumptions
+
+mDNS operates within the local multicast domain. It may not work across routed
+networks, VPNs, VLAN boundaries, Wi-Fi client isolation, firewalls blocking
+multicast, or Kubernetes CNI boundaries. Paper Guard fails gracefully when mDNS
+is unavailable (an empty result is not an error). See the Helm chart for the
+optional, separately-scoped mDNS publisher (`discovery.publisher`).
+
+---
 
 ## Configuration
 
@@ -447,6 +540,11 @@ the paper that can override the system's integrity rules. Every change must
 diffable, (4) be logged, and (5) be tagged with its provenance. No silent
 changes.
 
+Because Paper Guard handles unpublished scientific manuscripts, discovering a
+remote service on the LAN is **never** permission to upload one. Discovery only
+lists and verifies that a Paper Guard service exists; the client requires an
+explicit remote-mode selection before any manuscript leaves the machine.
+
 ---
 
 ## Development
@@ -480,6 +578,7 @@ paper-guard/
 │   ├── paper-guard-app/     # shared application layer (config, pipeline, memory)
 │   ├── paper-guard-service/ # optional HTTP service mode
 │   ├── paper-guard-client/  # HTTP client for a remote service (transport only)
+│   ├── paper-guard-discovery/ # LAN service discovery (mDNS/DNS-SD, mock)
 │   └── paper-guard-cli/
 └── tests/
 ```

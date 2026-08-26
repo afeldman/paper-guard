@@ -106,6 +106,69 @@ reverse proxy/ingress terminates TLS). The client resolves a bearer token from
 the configured `auth_token_env` at request time and never stores or logs it;
 manuscript content is never cached or logged.
 
+### 2.1d LAN discovery (M5.1)
+
+Paper Guard has provider-independent, **optional** LAN service discovery so a
+service in a local cluster can be found by machines on the same LAN without
+manually entering a node IP, Service/NodePort, or Ingress address. Discovery is
+a third, explicitly-opted-in path in addition to local and explicit-remote:
+
+```text
+no explicit server
+        │
+        ▼
+  optional discovery
+        │
+   ┌────┴────┐
+   │         │
+ found     not found
+   │         │
+   ▼         ▼
+ remote     local
+```
+
+**Abstraction.** The client depends only on the `ServiceDiscovery` trait and the
+[`ServiceEndpoint`] model in `paper-guard-discovery`. mDNS/DNS-SD (via the
+`mdns-sd` crate) is one pluggable backend; a deterministic
+`MockServiceDiscovery` covers tests. Future mechanisms (DNS-SD, static config,
+Kubernetes discovery) remain replaceable. No Avahi/mDNS logic lives in the
+Paper Guard application itself. The DNS-SD service type `_paper-guard._tcp`
+uniquely identifies Paper Guard and does not collide with any registered IANA
+service.
+
+**Opt-in, never implicit.** Discovery is disabled by default (`[discovery]
+enabled = false`). Unknown modes fail closed to `off`. The client never probes
+the network implicitly. `paper-guard discover` performs a manual browse, lists
+all candidates, verifies each through `GET /health`, and exits without
+uploading anything.
+
+**Security contract.**
+
+> **Discovery ≠ authorization.** Finding a Paper Guard service never authorises
+> an upload. Paper Guard never sends a manuscript to a discovered service unless
+> remote execution has been explicitly selected.
+
+Discovered records are **untrusted input**: they are parsed defensively and
+sanitised so a hostile record cannot inject a scheme, port, path, credentials,
+or cause command execution / filesystem access / secret disclosure. Candidates
+are cross-checked via `/health`: a service that does not self-identify as Paper
+Guard is rejected, and obvious API-version incompatibilities are surfaced as
+`INCOMPATIBLE_SERVICE_VERSION` (API compatibility is preferred over binary
+version equality). Multiple services are always listed; selection is never
+"first response wins" and requires an explicit `preferred_service` in Auto mode.
+
+**Deployment.** The Kubernetes/k3s chart keeps discovery config in the app's
+`paper-guard.toml`, but mDNS *publishing* stays a separate, opt-in
+infrastructure pod (`discovery.publisher`, default off) with its own security
+context. The Paper Guard app container remains unprivileged and never requires
+`hostNetwork`, `NET_ADMIN`, or `NET_RAW`; if a publisher needs those, they are
+scoped to the publisher pod only.
+
+**Networking limits.** mDNS operates within the local multicast domain and may
+not cross routed networks, VPNs, VLANs, Wi-Fi client isolation, multicast-blocking
+firewalls, or CNI boundaries. Paper Guard fails gracefully (empty result, not an
+error) when mDNS is unavailable.
+
 ### 2.2 Canonical Paper Model (in `paper-guard-core`)
 
 Reviewers never operate on raw PDF text. The parser normalizes a document into

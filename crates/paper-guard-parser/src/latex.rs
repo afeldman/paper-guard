@@ -116,10 +116,7 @@ fn build_sections(body: &str) -> (Vec<Section>, Vec<Citation>, Vec<Claim>) {
                         .as_ref()
                         .map(|s| s.paragraphs.len() + 1)
                         .unwrap_or(1);
-                    let base = current
-                        .as_ref()
-                        .map(|s| s.id.0.as_str())
-                        .unwrap_or("front");
+                    let base = current.as_ref().map(|s| s.id.0.as_str()).unwrap_or("front");
                     let para_id = ParagraphId(format!("{base}.paragraph_{para_idx}"));
                     // Citations are extracted from RAW text (pre-cleaning).
                     let cit = extract_citations(para_id.clone(), &raw);
@@ -288,7 +285,8 @@ fn split_bib_key(item: &str) -> (String, String) {
 
 fn extract_field(text: &str, field: &str) -> Option<String> {
     let re = regex::Regex::new(&format!(r"\\{}\s*{{([^}}]*)}}", regex::escape(field))).ok()?;
-    re.captures(text).map(|c| clean_tex(c.get(1).map(|m| m.as_str()).unwrap_or_default()))
+    re.captures(text)
+        .map(|c| clean_tex(c.get(1).map(|m| m.as_str()).unwrap_or_default()))
 }
 
 fn extract_year(text: &str) -> Option<u32> {
@@ -296,7 +294,12 @@ fn extract_year(text: &str) -> Option<u32> {
         .ok()?
         .captures(text)
         .and_then(|c| c.get(0))
-        .and_then(|m| m.as_str().trim_matches(|c| c == '(' || c == ')').parse().ok())
+        .and_then(|m| {
+            m.as_str()
+                .trim_matches(|c| c == '(' || c == ')')
+                .parse()
+                .ok()
+        })
 }
 
 /// Extract `\cite{...}` citations from a paragraph.
@@ -464,7 +467,8 @@ fn clean_tex(input: &str) -> String {
 
 fn regex_capture<'a>(text: &'a str, pattern: &str) -> Option<&'a str> {
     let re = regex::Regex::new(pattern).ok()?;
-    re.captures(text).map(|c| c.get(1).map(|m| m.as_str()).unwrap_or_default())
+    re.captures(text)
+        .map(|c| c.get(1).map(|m| m.as_str()).unwrap_or_default())
 }
 
 fn capture_first(text: &str, pattern: &str) -> Option<String> {

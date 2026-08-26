@@ -164,15 +164,17 @@ fn paragraph_overlaps(text: &str, paragraphs: &[&str], ngram: usize) -> bool {
             tokens.iter().all(|t| pt.contains(t))
         });
     }
-    let grams: Vec<Vec<String>> = tokens
-        .windows(ngram)
-        .map(|w| w.to_vec())
-        .collect();
+    let grams: Vec<Vec<String>> = tokens.windows(ngram).map(|w| w.to_vec()).collect();
     paragraphs.iter().any(|p| {
         let pt = tokenize(p);
-        let overlap = pt.windows(ngram).filter(|w| {
-            grams.iter().any(|g| g.iter().zip(w.iter()).all(|(a, b)| a == b))
-        }).count();
+        let overlap = pt
+            .windows(ngram)
+            .filter(|w| {
+                grams
+                    .iter()
+                    .any(|g| g.iter().zip(w.iter()).all(|(a, b)| a == b))
+            })
+            .count();
         overlap >= 1
     })
 }
@@ -180,7 +182,10 @@ fn paragraph_overlaps(text: &str, paragraphs: &[&str], ngram: usize) -> bool {
 /// Tokenize into lowercase normalized words.
 fn tokenize(s: &str) -> Vec<String> {
     s.split_whitespace()
-        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())
+        .map(|w| {
+            w.trim_matches(|c: char| !c.is_alphanumeric())
+                .to_lowercase()
+        })
         .filter(|w| !w.is_empty())
         .collect()
 }
@@ -272,6 +277,9 @@ mod tests {
         });
         let v = TextValidator::new();
         let report = v.validate(&orig, &re);
-        assert!(report.issues.iter().any(|i| i.message.contains("no caption")));
+        assert!(report
+            .issues
+            .iter()
+            .any(|i| i.message.contains("no caption")));
     }
 }

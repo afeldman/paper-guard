@@ -16,8 +16,8 @@ use std::time::Duration;
 use reqwest::StatusCode;
 
 use crate::{
-    ContentPart, LlmProvider, LlmRequest, LlmResponse, LlmUsage, ModelConfig,
-    ProviderCapabilities, ProviderError, ProviderKind, TransientKind,
+    ContentPart, LlmProvider, LlmRequest, LlmResponse, LlmUsage, ModelConfig, ProviderCapabilities,
+    ProviderError, ProviderKind, TransientKind,
 };
 
 /// Retry / backoff policy for the OpenAI-compatible provider.
@@ -233,18 +233,12 @@ impl OpenAICompatibleProvider {
         let url = self.chat_completions_url();
         let body = self.build_request_body(request);
 
-        let mut req = self
-            .client
-            .post(&url)
-            .json(&body);
+        let mut req = self.client.post(&url).json(&body);
         if let Some(key) = &self.api_key {
             req = req.header("Authorization", format!("Bearer {key}"));
         }
 
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| classify_send_error(&e))?;
+        let resp = req.send().await.map_err(|e| classify_send_error(&e))?;
 
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
@@ -294,16 +288,19 @@ fn build_user_content(parts: &[ContentPart]) -> serde_json::Value {
 
 /// Parse a successful 2xx response body into an [`LlmResponse`].
 fn parse_success(body: &str) -> Result<LlmResponse, ProviderError> {
-    let value: serde_json::Value = serde_json::from_str(body)
-        .map_err(|e| ProviderError::MalformedResponse(format!("invalid JSON in success body: {e}")))?;
+    let value: serde_json::Value = serde_json::from_str(body).map_err(|e| {
+        ProviderError::MalformedResponse(format!("invalid JSON in success body: {e}"))
+    })?;
 
     let choices = value
         .get("choices")
         .and_then(|c| c.as_array())
-        .ok_or_else(|| ProviderError::MalformedResponse("response missing `choices` array".into()))?;
-    let choice = choices
-        .first()
-        .ok_or_else(|| ProviderError::MalformedResponse("response has an empty `choices` array".into()))?;
+        .ok_or_else(|| {
+            ProviderError::MalformedResponse("response missing `choices` array".into())
+        })?;
+    let choice = choices.first().ok_or_else(|| {
+        ProviderError::MalformedResponse("response has an empty `choices` array".into())
+    })?;
 
     // Support both `choices[0].message.content` (string) and newer
     // `choices[0].message.content` as an array of parts.
@@ -311,7 +308,9 @@ fn parse_success(body: &str) -> Result<LlmResponse, ProviderError> {
         .get("message")
         .and_then(|m| m.get("content"))
         .map(extract_content_text)
-        .ok_or_else(|| ProviderError::MalformedResponse("response message missing `content`".into()))?;
+        .ok_or_else(|| {
+            ProviderError::MalformedResponse("response message missing `content`".into())
+        })?;
 
     let usage = value.get("usage").map(|u| LlmUsage {
         prompt_tokens: u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
@@ -330,7 +329,11 @@ fn extract_content_text(content: &serde_json::Value) -> String {
         serde_json::Value::String(s) => s.clone(),
         serde_json::Value::Array(items) => items
             .iter()
-            .filter_map(|item| item.get("text").and_then(|t| t.as_str()).map(|s| s.to_string()))
+            .filter_map(|item| {
+                item.get("text")
+                    .and_then(|t| t.as_str())
+                    .map(|s| s.to_string())
+            })
             .collect::<Vec<_>>()
             .join("\n"),
         _ => String::new(),
@@ -405,7 +408,10 @@ impl LlmProvider for OpenAICompatibleProvider {
         // Capability gate: a request that cannot be honoured must fail
         // explicitly, never silently drop content.
         if request.needs_image_capability() && !self.config.capabilities.vision {
-            return Err(ProviderError::Capability(crate::ProviderCapabilityError::VisionUnsupported).into());
+            return Err(ProviderError::Capability(
+                crate::ProviderCapabilityError::VisionUnsupported,
+            )
+            .into());
         }
 
         let max_retries = self.config.retry.max_retries;
@@ -438,7 +444,8 @@ impl LlmProvider for OpenAICompatibleProvider {
 
 /// Compute the backoff delay for a given retry attempt (1-indexed).
 fn backoff_for(policy: &RetryPolicy, attempt: u32) -> Duration {
-    let base = policy.base_backoff_seconds as f64 * policy.backoff_multiplier.powf((attempt - 1) as f64);
+    let base =
+        policy.base_backoff_seconds as f64 * policy.backoff_multiplier.powf((attempt - 1) as f64);
     Duration::from_secs(base.round().min(policy.max_backoff_seconds as f64).max(1.0) as u64)
 }
 

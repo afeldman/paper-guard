@@ -29,13 +29,13 @@ pub mod model;
 pub mod verify;
 
 pub use error::{DiscoveryError, DiscoveryResult};
+pub use mdns::MdnsServiceDiscovery;
+pub use mock::MockServiceDiscovery;
 pub use model::{
     DiscoveryConfig, DiscoveryMode, ServiceEndpoint, PAPER_GUARD_SERVICE_DOMAIN,
     PAPER_GUARD_SERVICE_TYPE, TXT_KEY_SCHEME, TXT_KEY_VERSION,
 };
-pub use verify::{select_service, verify_and_classify, VerifiedEndpoint, VerificationOutcome};
-pub use mdns::MdnsServiceDiscovery;
-pub use mock::MockServiceDiscovery;
+pub use verify::{select_service, verify_and_classify, VerificationOutcome, VerifiedEndpoint};
 
 use async_trait::async_trait;
 

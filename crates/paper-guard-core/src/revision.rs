@@ -132,7 +132,10 @@ impl AllowedChange {
         match self {
             AllowedChange::RewriteSentence => matches!(op, RevisionOperation::RewriteSentence),
             AllowedChange::WeakenClaim => {
-                matches!(op, RevisionOperation::WeakenClaim | RevisionOperation::AdjustClaimStrength)
+                matches!(
+                    op,
+                    RevisionOperation::WeakenClaim | RevisionOperation::AdjustClaimStrength
+                )
             }
             AllowedChange::AddLimitation => matches!(op, RevisionOperation::AddLimitation),
             AllowedChange::Clarify => matches!(op, RevisionOperation::Clarify),
@@ -209,7 +212,12 @@ pub struct ScopeCheck {
 
 impl std::fmt::Display for ScopeCheck {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} -> {}", self.operation_name(), if self.allowed { "ALLOWED" } else { "FORBIDDEN" })
+        write!(
+            f,
+            "{} -> {}",
+            self.operation_name(),
+            if self.allowed { "ALLOWED" } else { "FORBIDDEN" }
+        )
     }
 }
 
@@ -345,7 +353,10 @@ pub enum RevisionValidationError {
     #[error("revision {revision_id} requires human approval but none was granted")]
     MissingApproval { revision_id: String },
     #[error("operation {operation:?} at {location} is not within the allowed scope")]
-    OperationNotAllowed { operation: RevisionOperation, location: String },
+    OperationNotAllowed {
+        operation: RevisionOperation,
+        location: String,
+    },
 }
 
 #[cfg(test)]
@@ -370,10 +381,7 @@ mod tests {
         let inst = instruction_weaken();
         let scope = inst.scope();
         // The term "40%" must NOT be invented, but we can weaken the claim.
-        assert!(scope.allows(
-            RevisionOperation::WeakenClaim,
-            AllowedChange::WeakenClaim
-        ));
+        assert!(scope.allows(RevisionOperation::WeakenClaim, AllowedChange::WeakenClaim));
     }
 
     #[test]
@@ -463,14 +471,23 @@ mod tests {
     fn revision_operations_are_categorized_conservatively() {
         use crate::RevisionCategory::*;
         // Evidence-preserving: weakening / clarification never adds facts.
-        assert_eq!(RevisionOperation::WeakenClaim.category(), EvidencePreservingChange);
-        assert_eq!(RevisionOperation::Clarify.category(), EvidencePreservingChange);
+        assert_eq!(
+            RevisionOperation::WeakenClaim.category(),
+            EvidencePreservingChange
+        );
+        assert_eq!(
+            RevisionOperation::Clarify.category(),
+            EvidencePreservingChange
+        );
         assert_eq!(
             RevisionOperation::AddCitationForExistingReference.category(),
             EvidencePreservingChange
         );
         // Presentation-only edits.
-        assert_eq!(RevisionOperation::FixCaption.category(), SafePresentationChange);
+        assert_eq!(
+            RevisionOperation::FixCaption.category(),
+            SafePresentationChange
+        );
         assert_eq!(
             RevisionOperation::FixTableHeader.category(),
             SafePresentationChange

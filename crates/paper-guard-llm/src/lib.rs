@@ -16,9 +16,7 @@ pub use mock::{
     hash_bytes, with_schema, MockLlmFactory, MockLlmRequest, MockLlmScenario, MockOutcome,
     MockProvider,
 };
-pub use openai_compatible::{
-    OpenAICompatibleConfig, OpenAICompatibleProvider, RetryPolicy,
-};
+pub use openai_compatible::{OpenAICompatibleConfig, OpenAICompatibleProvider, RetryPolicy};
 pub use provider::{
     LlmContent, LlmImage, LlmProvider, ModelConfig, ProviderCapabilities, ProviderCapabilityError,
     ProviderError, ProviderKind, TransientKind,
@@ -184,8 +182,14 @@ mod tests {
 
     #[test]
     fn provider_kind_from_str() {
-        assert_eq!("openai".parse::<ProviderKind>().unwrap(), ProviderKind::OpenAi);
-        assert_eq!("anthropic".parse::<ProviderKind>().unwrap(), ProviderKind::Anthropic);
+        assert_eq!(
+            "openai".parse::<ProviderKind>().unwrap(),
+            ProviderKind::OpenAi
+        );
+        assert_eq!(
+            "anthropic".parse::<ProviderKind>().unwrap(),
+            ProviderKind::Anthropic
+        );
         assert!("bogus".parse::<ProviderKind>().is_err());
     }
 

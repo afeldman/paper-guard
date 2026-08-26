@@ -153,8 +153,7 @@ impl LedgerStore {
         let prior = self.load_run(prior_run_id)?;
         let mut regressed = Vec::new();
         for f in &prior.findings {
-            if f.status == FindingStatus::Resolved && current_finding_ids.contains(&f.finding_id)
-            {
+            if f.status == FindingStatus::Resolved && current_finding_ids.contains(&f.finding_id) {
                 regressed.push(f.finding_id.clone());
             }
         }
@@ -241,29 +240,57 @@ mod tests {
         );
         run1.findings.push(f);
         store.save_run(&run1).unwrap();
-        assert_eq!(store.load_run("run-001").unwrap().findings[0].status, paper_guard_core::FindingStatus::Open);
+        assert_eq!(
+            store.load_run("run-001").unwrap().findings[0].status,
+            paper_guard_core::FindingStatus::Open
+        );
 
         // Run 002: the finding is revised (address assigned).
         let run2 = {
             let mut r = sample_run("run-002", "abc");
             // Carry the finding forward; mark REVISED.
-            r.findings.push(store.load_run("run-001").unwrap().findings[0].clone());
+            r.findings
+                .push(store.load_run("run-001").unwrap().findings[0].clone());
             r
         };
         store.save_run(&run2).unwrap();
-        store.update_finding_status("run-002", "PG-001", paper_guard_core::FindingStatus::Revised).unwrap();
-        assert_eq!(store.load_run("run-002").unwrap().findings[0].status, paper_guard_core::FindingStatus::Revised);
+        store
+            .update_finding_status(
+                "run-002",
+                "PG-001",
+                paper_guard_core::FindingStatus::Revised,
+            )
+            .unwrap();
+        assert_eq!(
+            store.load_run("run-002").unwrap().findings[0].status,
+            paper_guard_core::FindingStatus::Revised
+        );
 
         // Run 003: resolved.
         let run3 = {
             let mut r = sample_run("run-003", "abc");
-            r.findings.push(store.load_run("run-002").unwrap().findings[0].clone());
+            r.findings
+                .push(store.load_run("run-002").unwrap().findings[0].clone());
             r
         };
         store.save_run(&run3).unwrap();
-        store.update_finding_status("run-003", "PG-001", paper_guard_core::FindingStatus::Resolved).unwrap();
-        assert_eq!(store.load_run("run-003").unwrap().findings[0].status, paper_guard_core::FindingStatus::Resolved);
-        assert_eq!(store.load_run("run-003").unwrap().findings[0].resolved_in.as_deref(), Some("run-003"));
+        store
+            .update_finding_status(
+                "run-003",
+                "PG-001",
+                paper_guard_core::FindingStatus::Resolved,
+            )
+            .unwrap();
+        assert_eq!(
+            store.load_run("run-003").unwrap().findings[0].status,
+            paper_guard_core::FindingStatus::Resolved
+        );
+        assert_eq!(
+            store.load_run("run-003").unwrap().findings[0]
+                .resolved_in
+                .as_deref(),
+            Some("run-003")
+        );
 
         // Run 004: the same finding reappears (reintroduced). Regression must
         // be detected relative to the run where it was Resolved.

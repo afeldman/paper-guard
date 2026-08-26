@@ -177,7 +177,11 @@ impl IntegrityCheck {
 /// This guard is used before persisting a support assertion. Callers must prove
 /// the `Supported` / `PartiallySupported` / `WeaklySupported` states genuinely
 /// correspond to artifacts; otherwise they may not be reported.
-pub fn assert_not_fabricated(origin: &str, has_real_artifacts: bool, state: EvidenceState) -> IntegrityCheck {
+pub fn assert_not_fabricated(
+    origin: &str,
+    has_real_artifacts: bool,
+    state: EvidenceState,
+) -> IntegrityCheck {
     use EvidenceState::*;
     match (has_real_artifacts, state) {
         (true, Supported | PartiallySupported | WeaklySupported) => IntegrityCheck::ok(state),

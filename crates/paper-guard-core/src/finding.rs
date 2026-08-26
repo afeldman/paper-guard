@@ -146,7 +146,9 @@ impl Finding {
     /// Validate structural invariants of a finding.
     pub fn validate(&self) -> Result<(), FindingValidationError> {
         if self.confidence < 0.0 || self.confidence > 1.0 {
-            return Err(FindingValidationError::ConfidenceOutOfRange(self.confidence));
+            return Err(FindingValidationError::ConfidenceOutOfRange(
+                self.confidence,
+            ));
         }
         if self.finding_id.trim().is_empty() {
             return Err(FindingValidationError::EmptyFindingId);

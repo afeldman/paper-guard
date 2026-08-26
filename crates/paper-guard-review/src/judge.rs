@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use paper_guard_core::{
     AllowedChange, ApprovalLevel, Finding, FindingCategory, FindingSeverity, FindingStatus,
-    RevisionInstruction, RevisionOperation, RevisionId,
+    RevisionId, RevisionInstruction, RevisionOperation,
 };
 use serde::{Deserialize, Serialize};
 
@@ -63,8 +63,9 @@ pub fn default_operation_for_category(cat: FindingCategory) -> RevisionOperation
         }
         MissingControl | Confounder | Bias | StatisticalWeakness | Leakage | Reproducibility
         | LogicalGap | Limitation => RevisionOperation::AddLimitation,
-        ReferenceError | MissingReference | CitationMismatch
-        | HallucinatedReference => RevisionOperation::AddCitationForExistingReference,
+        ReferenceError | MissingReference | CitationMismatch | HallucinatedReference => {
+            RevisionOperation::AddCitationForExistingReference
+        }
         FigureIssue => RevisionOperation::FixCaption,
         TableIssue => RevisionOperation::FixTableHeader,
         PromptInjection => RevisionOperation::RemoveUnsupportedAssertion,
@@ -195,7 +196,12 @@ impl Judge {
             }
     }
 
-    fn make_revision(&self, f: &Finding, op: RevisionOperation, counter: usize) -> RevisionInstruction {
+    fn make_revision(
+        &self,
+        f: &Finding,
+        op: RevisionOperation,
+        counter: usize,
+    ) -> RevisionInstruction {
         let allowed = default_allowed_changes(op);
         RevisionInstruction {
             revision_id: RevisionId(format!("REV-{:03}", counter)),
@@ -249,7 +255,12 @@ mod tests {
     use super::*;
     use paper_guard_core::{FindingCategory, ReviewerKind};
 
-    fn finding(id: &str, cat: FindingCategory, sev: FindingSeverity, claim: Option<&str>) -> Finding {
+    fn finding(
+        id: &str,
+        cat: FindingCategory,
+        sev: FindingSeverity,
+        claim: Option<&str>,
+    ) -> Finding {
         Finding {
             finding_id: id.into(),
             reviewer: ReviewerKind::Adversarial,
@@ -269,8 +280,18 @@ mod tests {
     fn consolidates_and_produces_revisions() {
         let judge = Judge::new("v1", true);
         let out = judge.consolidate(vec![
-            finding("PG-1", FindingCategory::UnsupportedClaim, FindingSeverity::Major, Some("C1")),
-            finding("PG-2", FindingCategory::UnsupportedClaim, FindingSeverity::Major, Some("C1")),
+            finding(
+                "PG-1",
+                FindingCategory::UnsupportedClaim,
+                FindingSeverity::Major,
+                Some("C1"),
+            ),
+            finding(
+                "PG-2",
+                FindingCategory::UnsupportedClaim,
+                FindingSeverity::Major,
+                Some("C1"),
+            ),
         ]);
         assert_eq!(out.entries.len(), 1); // merged
         assert_eq!(out.revisions.len(), 1);

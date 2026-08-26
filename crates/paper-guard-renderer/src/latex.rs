@@ -49,7 +49,9 @@ impl LatexRenderer {
                     "\\bibitem{{{}}}{} ({}). {}.\n",
                     escape_brace(&r.reference_id.0),
                     escape_brace(&r.authors),
-                    r.year.map(|y| y.to_string()).unwrap_or_else(|| "n.d.".into()),
+                    r.year
+                        .map(|y| y.to_string())
+                        .unwrap_or_else(|| "n.d.".into()),
                     escape_brace(&r.title)
                 ));
             }

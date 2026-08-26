@@ -5,10 +5,10 @@
 //! health verification (via a mocked HTTP service), version compatibility,
 //! selection logic, and the security guarantees of the discovery subsystem.
 
+use paper_guard_discovery::mock::{endpoint, MockServiceDiscovery};
 use paper_guard_discovery::model::{
     DiscoveryConfig, DiscoveryMode, ServiceEndpoint, PAPER_GUARD_SERVICE_TYPE,
 };
-use paper_guard_discovery::mock::{endpoint, MockServiceDiscovery};
 use paper_guard_discovery::verify::{
     select_service, verify_and_classify, version_incompatible, VerificationOutcome,
 };
@@ -123,7 +123,13 @@ async fn mock_zero_services() {
 #[tokio::test]
 async fn mock_multiple_services() {
     let a = endpoint("pg-lab", "paper-guard.lab.local", "10.0.0.1", 8080, "0.5.0");
-    let b = endpoint("pg-dept", "paper-guard.department.local", "10.0.0.2", 8080, "0.5.0");
+    let b = endpoint(
+        "pg-dept",
+        "paper-guard.department.local",
+        "10.0.0.2",
+        8080,
+        "0.5.0",
+    );
     let provider = MockServiceDiscovery::new(vec![a, b]);
     let found = provider.discover().await.unwrap();
     assert_eq!(found.len(), 2);
@@ -165,7 +171,10 @@ fn duplicate_rule_is_by_fullname_identity() {
     // Distinct hostnames are distinct services even if the names resemble each
     // other — never merge on the name alone.
     let c = endpoint("pg", "paper-guard.dept.local", "192.168.1.2", 8080, "0.5.0");
-    assert_ne!((a.name.as_str(), a.hostname.as_str()), (c.name.as_str(), c.hostname.as_str()));
+    assert_ne!(
+        (a.name.as_str(), a.hostname.as_str()),
+        (c.name.as_str(), c.hostname.as_str())
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -288,8 +297,20 @@ fn rejected(ep: ServiceEndpoint) -> paper_guard_discovery::verify::VerifiedEndpo
 
 #[test]
 fn selection_requires_explicit_choice_when_multiple() {
-    let a = verified(endpoint("pg-a", "paper-guard.lab.local", "10.0.0.1", 8080, "0.5.0"));
-    let b = verified(endpoint("pg-b", "paper-guard.dept.local", "10.0.0.2", 8080, "0.5.0"));
+    let a = verified(endpoint(
+        "pg-a",
+        "paper-guard.lab.local",
+        "10.0.0.1",
+        8080,
+        "0.5.0",
+    ));
+    let b = verified(endpoint(
+        "pg-b",
+        "paper-guard.dept.local",
+        "10.0.0.2",
+        8080,
+        "0.5.0",
+    ));
     let result = select_service(&[a, b], "");
     assert!(result.is_err()); // never "first response wins"
     assert!(matches!(
@@ -300,23 +321,53 @@ fn selection_requires_explicit_choice_when_multiple() {
 
 #[test]
 fn selection_single_service_auto() {
-    let a = verified(endpoint("pg-a", "paper-guard.lab.local", "10.0.0.1", 8080, "0.5.0"));
+    let a = verified(endpoint(
+        "pg-a",
+        "paper-guard.lab.local",
+        "10.0.0.1",
+        8080,
+        "0.5.0",
+    ));
     let result = select_service(&[a], "");
     assert!(result.is_ok());
 }
 
 #[test]
 fn selection_honors_preferred_service() {
-    let a = verified(endpoint("pg-a", "paper-guard.lab.local", "10.0.0.1", 8080, "0.5.0"));
-    let b = verified(endpoint("pg-b", "paper-guard.dept.local", "10.0.0.2", 8080, "0.5.0"));
+    let a = verified(endpoint(
+        "pg-a",
+        "paper-guard.lab.local",
+        "10.0.0.1",
+        8080,
+        "0.5.0",
+    ));
+    let b = verified(endpoint(
+        "pg-b",
+        "paper-guard.dept.local",
+        "10.0.0.2",
+        8080,
+        "0.5.0",
+    ));
     let result = select_service(&[a.clone(), b], "paper-guard.lab.local").unwrap();
     assert_eq!(result.name, "pg-a");
 }
 
 #[test]
 fn selection_rejects_incompatible_only_truly() {
-    let a = verified(endpoint("pg-a", "paper-guard.lab.local", "10.0.0.1", 8080, "0.5.0"));
-    let b = rejected(endpoint("pg-b", "paper-guard.dept.local", "10.0.0.2", 8080, "0.5.0"));
+    let a = verified(endpoint(
+        "pg-a",
+        "paper-guard.lab.local",
+        "10.0.0.1",
+        8080,
+        "0.5.0",
+    ));
+    let b = rejected(endpoint(
+        "pg-b",
+        "paper-guard.dept.local",
+        "10.0.0.2",
+        8080,
+        "0.5.0",
+    ));
     // Rejected candidates are excluded; a single verified one is returned.
     let result = select_service(&[a, b], "").unwrap();
     assert_eq!(result.name, "pg-a");

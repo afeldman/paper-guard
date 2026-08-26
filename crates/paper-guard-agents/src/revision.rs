@@ -1,8 +1,6 @@
 //! The revision engine: applies approved revisions within a strict scope.
 
-use paper_guard_core::{
-    Revision, RevisionChange, RevisionInstruction, RevisionOperation,
-};
+use paper_guard_core::{Revision, RevisionChange, RevisionInstruction, RevisionOperation};
 
 /// Options for the revision engine.
 #[derive(Debug, Clone)]
@@ -149,7 +147,11 @@ impl RevisionEngine {
     /// numeric overstatement, weakening a claim). No scientific content is
     /// added or altered numerically. If no safe change can be determined, an
     /// empty list is returned so the caller fails closed.
-    fn build_changes(&self, instruction: &RevisionInstruction, source: &str) -> Vec<RevisionChange> {
+    fn build_changes(
+        &self,
+        instruction: &RevisionInstruction,
+        source: &str,
+    ) -> Vec<RevisionChange> {
         match instruction.operation {
             RevisionOperation::WeakenClaim => {
                 // Remove a numeric overstatement (e.g. " by 40%") from the
@@ -267,8 +269,7 @@ mod tests {
             vec![AllowedChange::WeakenClaim, AllowedChange::RewriteSentence],
             true,
         );
-        let out =
-            engine.apply(&inst, "run-001", false, "reduces latency by 40%");
+        let out = engine.apply(&inst, "run-001", false, "reduces latency by 40%");
         assert!(!out.applied);
         assert!(out.rejected.is_some());
     }
@@ -312,4 +313,3 @@ mod tests {
         }
     }
 }
-

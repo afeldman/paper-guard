@@ -72,10 +72,7 @@ impl ServiceEndpoint {
             .trim_start_matches("http://")
             .trim_start_matches("https://");
         // 2. Take only the authority up to the first `/`, `?`, or `#`.
-        let host = host
-            .split(['/', '?', '#'])
-            .next()
-            .unwrap_or(host);
+        let host = host.split(['/', '?', '#']).next().unwrap_or(host);
         // 3. Drop any userinfo (`user:pass@host` up to the last `@`).
         let host = host.rsplit('@').next().unwrap_or(host);
         // 4. Drop any embedded `:port`.

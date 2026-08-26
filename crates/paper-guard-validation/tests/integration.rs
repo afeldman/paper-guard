@@ -24,9 +24,12 @@ fn rerender_then_validate_preserves_content() {
 
     // Re-parse the rendered output.
     let parser = paper_guard_parser::LatexParser;
-    let parsed = tokio::runtime::Runtime::new()
-        .unwrap()
-        .block_on(async { parser.parse("<rendered>", rendered.text.as_bytes()).await.unwrap() });
+    let parsed = tokio::runtime::Runtime::new().unwrap().block_on(async {
+        parser
+            .parse("<rendered>", rendered.text.as_bytes())
+            .await
+            .unwrap()
+    });
 
     let validator = TextValidator::new();
     let report: ValidationReport = validator.validate(&doc, &parsed.document);

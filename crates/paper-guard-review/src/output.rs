@@ -58,11 +58,7 @@ impl ReviewerOutput {
     }
 
     /// Build an output from raw response text, deferring finding parsing.
-    pub fn from_raw(
-        reviewer: &str,
-        raw_response: String,
-        request_hash: Option<String>,
-    ) -> Self {
+    pub fn from_raw(reviewer: &str, raw_response: String, request_hash: Option<String>) -> Self {
         ReviewerOutput {
             reviewer: reviewer.to_string(),
             raw_response,
@@ -95,10 +91,9 @@ impl ReviewerOutput {
 pub fn resolve_findings(payload: &str) -> anyhow::Result<Vec<Finding>> {
     let trimmed = payload.trim();
     if trimmed.is_empty() {
-        return Err(ReviewOutputError::Invalid(
-            "empty reviewer response (no JSON)".to_string(),
-        )
-        .into());
+        return Err(
+            ReviewOutputError::Invalid("empty reviewer response (no JSON)".to_string()).into(),
+        );
     }
     let value: serde_json::Value = serde_json::from_str(trimmed).map_err(|e| {
         ReviewOutputError::Invalid(format!(
@@ -125,9 +120,7 @@ pub fn resolve_findings(payload: &str) -> anyhow::Result<Vec<Finding>> {
         }
         serde_json::Value::Object(_) => {
             let p: FindingPayload = serde_json::from_value(value).map_err(|e| {
-                ReviewOutputError::Invalid(format!(
-                    "single finding does not match the schema: {e}"
-                ))
+                ReviewOutputError::Invalid(format!("single finding does not match the schema: {e}"))
             })?;
             Ok(vec![p.into_finding().map_err(|e| {
                 ReviewOutputError::Invalid(format!("single finding failed validation: {e}"))

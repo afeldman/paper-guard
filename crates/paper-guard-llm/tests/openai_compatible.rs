@@ -134,9 +134,7 @@ async fn auth_error_is_returned_and_not_retried() {
     let provider = provider_for(&mock_server, retry);
 
     Mock::given(method("POST"))
-        .respond_with(
-            ResponseTemplate::new(401).set_body_string("{\"error\":\"bad key\"}"),
-        )
+        .respond_with(ResponseTemplate::new(401).set_body_string("{\"error\":\"bad key\"}"))
         .expect(1) // auth is NOT retried
         .mount(&mock_server)
         .await;

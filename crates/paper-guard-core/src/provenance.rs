@@ -98,7 +98,10 @@ mod tests {
         assert_eq!(Provenance::ParserOutput.tag(), "PARSER_OUTPUT");
         assert_eq!(Provenance::ReviewerOutput.tag(), "REVIEWER_OUTPUT");
         assert_eq!(Provenance::JudgeOutput.tag(), "JUDGE_OUTPUT");
-        assert_eq!(Provenance::RevisionInstruction.tag(), "REVISION_INSTRUCTION");
+        assert_eq!(
+            Provenance::RevisionInstruction.tag(),
+            "REVISION_INSTRUCTION"
+        );
         assert_eq!(Provenance::RevisionOutput.tag(), "REVISION_OUTPUT");
         assert_eq!(Provenance::ValidationOutput.tag(), "VALIDATION_OUTPUT");
     }

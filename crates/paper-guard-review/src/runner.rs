@@ -41,7 +41,11 @@ pub struct ReviewRunner {
 impl ReviewRunner {
     pub fn new(max_concurrent: usize) -> Self {
         ReviewRunner {
-            max_concurrent: if max_concurrent == 0 { 4 } else { max_concurrent },
+            max_concurrent: if max_concurrent == 0 {
+                4
+            } else {
+                max_concurrent
+            },
         }
     }
 
@@ -66,11 +70,14 @@ impl ReviewRunner {
             // the judge or as some other reviewer).
             let agent = reviewer.kind();
             let expected_agent = agent;
-            handles.push((expected_agent, tokio::spawn(async move {
-                // Take a permit to bound concurrency. If disabled, mark as such.
-                let _permit = semaphore.acquire().await;
-                run_one(reviewer, ctx, provider, agent).await
-            })));
+            handles.push((
+                expected_agent,
+                tokio::spawn(async move {
+                    // Take a permit to bound concurrency. If disabled, mark as such.
+                    let _permit = semaphore.acquire().await;
+                    run_one(reviewer, ctx, provider, agent).await
+                }),
+            ));
         }
         let mut results = Vec::with_capacity(handles.len());
         for (expected_agent, h) in handles {

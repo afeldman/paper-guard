@@ -440,7 +440,9 @@ impl CanonicalDocumentBuilder {
             figures: self.figures,
             tables: self.tables,
             equations: self.equations,
-            source_hash: ContentHash("0000000000000000000000000000000000000000000000000000000000000000".to_string()),
+            source_hash: ContentHash(
+                "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+            ),
         };
         let model_hash = ContentHash::compute(&doc);
         doc.document_id = format!("doc-{}", &model_hash.0[..16]);
@@ -473,7 +475,10 @@ mod tests {
             .title("A Paper")
             .claim(sample_claim())
             .build();
-        assert_eq!(doc.claim(&ClaimId("C17".into())).unwrap().text, "The proposed method reduces latency by 40%.");
+        assert_eq!(
+            doc.claim(&ClaimId("C17".into())).unwrap().text,
+            "The proposed method reduces latency by 40%."
+        );
         assert_eq!(doc.claim_count(), 1);
         assert!(doc.document_id.starts_with("doc-"));
     }

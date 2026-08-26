@@ -50,10 +50,7 @@ pub struct VerifiedEndpoint {
 /// This is the only place the client contacts a candidate; it transmits no
 /// manuscript bytes. The HTTP timeout is short (5s) so a hostile or dead
 /// endpoint cannot stall discovery.
-pub async fn verify_and_classify(
-    endpoint: ServiceEndpoint,
-    our_version: &str,
-) -> VerifiedEndpoint {
+pub async fn verify_and_classify(endpoint: ServiceEndpoint, our_version: &str) -> VerifiedEndpoint {
     let mut ep = endpoint.clone();
     let base = ep.base_url();
     let client = match PaperGuardClient::new(&ephemeral_client_config(&base)) {
@@ -81,7 +78,10 @@ pub async fn verify_and_classify(
             } else {
                 VerificationOutcome::Verified
             };
-            VerifiedEndpoint { endpoint: ep, outcome }
+            VerifiedEndpoint {
+                endpoint: ep,
+                outcome,
+            }
         }
         Err(_) => VerifiedEndpoint {
             outcome: VerificationOutcome::Rejected,
@@ -167,7 +167,10 @@ pub fn version_incompatible(ours: &str, theirs: &str) -> bool {
 /// `0`). Returns `None` for values that are not valid semver prefixes.
 fn major_version(v: &str) -> Option<u32> {
     let first = v.trim().split('.').next()?;
-    let digits = first.chars().take_while(|c| c.is_ascii_digit()).collect::<String>();
+    let digits = first
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>();
     if digits.is_empty() {
         return None;
     }

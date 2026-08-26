@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 
 use super::error::{DiscoveryError, DiscoveryResult};
-use super::model::{ServiceEndpoint, TXT_KEY_VERSION, PAPER_GUARD_SERVICE_TYPE};
+use super::model::{ServiceEndpoint, PAPER_GUARD_SERVICE_TYPE, TXT_KEY_VERSION};
 use super::ServiceDiscovery;
 
 /// The default length of time to listen for mDNS responses before returning.
@@ -93,18 +93,18 @@ impl ServiceDiscovery for MdnsServiceDiscovery {
                     if let Some(ep) = endpoint_from_info(&info) {
                         // Late duplicates (a re-announce from the same
                         // instance) are dropped by fullname.
-                        if !endpoints.iter().any(|e| e.name == ep.name && e.hostname == ep.hostname)
+                        if !endpoints
+                            .iter()
+                            .any(|e| e.name == ep.name && e.hostname == ep.hostname)
                         {
                             endpoints.push(ep);
                         }
                     }
                 }
-                Ok(ServiceEvent::ServiceFound(..))
-                | Ok(ServiceEvent::SearchStarted(..)) => {
+                Ok(ServiceEvent::ServiceFound(..)) | Ok(ServiceEvent::SearchStarted(..)) => {
                     // Not yet resolved; wait for ServiceResolved.
                 }
-                Ok(ServiceEvent::ServiceRemoved(..))
-                | Ok(ServiceEvent::SearchStopped(..)) => {
+                Ok(ServiceEvent::ServiceRemoved(..)) | Ok(ServiceEvent::SearchStopped(..)) => {
                     // Keep listening; removal does not end the window.
                 }
                 Err(flume::RecvTimeoutError::Timeout) => {
@@ -130,7 +130,12 @@ impl ServiceDiscovery for MdnsServiceDiscovery {
 fn endpoint_from_info(info: &ServiceInfo) -> Option<ServiceEndpoint> {
     let service_type = info.get_type().to_string();
     let hostname = info.get_hostname().trim_end_matches('.').to_string();
-    let name = info.get_fullname().split('.').next().unwrap_or("").to_string();
+    let name = info
+        .get_fullname()
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .to_string();
     let port = info.get_port();
     if port == 0 {
         return None;

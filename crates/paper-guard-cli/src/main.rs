@@ -561,7 +561,10 @@ async fn run_discover(config_path: Option<&str>, force: bool) -> anyhow::Result<
         .with_timeout(std::time::Duration::from_millis(disc.timeout_ms));
     let candidates = provider.discover().await?;
 
-    rust_loguru::info!("event=discovery_completed | candidates={}", candidates.len());
+    rust_loguru::info!(
+        "event=discovery_completed | candidates={}",
+        candidates.len()
+    );
 
     if candidates.is_empty() {
         println!("No Paper Guard services found on the local network.");

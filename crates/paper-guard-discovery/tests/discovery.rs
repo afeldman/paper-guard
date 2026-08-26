@@ -351,3 +351,60 @@ async fn discovery_command_never_transmits_manuscript() {
         assert!(req.body.is_empty());
     }
 }
+
+// ---------------------------------------------------------------------------
+// End-to-end against the real Paper Guard service
+// ---------------------------------------------------------------------------
+
+/// Boot the actual Paper Guard HTTP service on a random loopback port and
+/// verify that discovery verification recognises it as healthy and compatible.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn verifies_a_real_paper_guard_service() {
+    use paper_guard_service::{serve, AppState};
+    use std::sync::Arc;
+
+    // Build a minimal default service state.
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = paper_guard_app::AppConfig::default();
+    cfg.reproducibility.data_dir = dir.path().to_str().unwrap().to_string();
+    cfg.service.data_dir = dir.path().to_str().unwrap().to_string();
+    cfg.memory.backend = "file".into();
+    cfg.memory.enabled = true;
+    cfg.memory.mode = "read_write".into();
+    cfg.memory.owner_id = "alice".into();
+    let memory = paper_guard_app::MemoryService::from_config(&cfg).unwrap();
+
+    // Bind to an ephemeral port before starting the server so we know the port.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    drop(listener); // serve() will re-bind the same address right away.
+
+    let state = AppState {
+        config: Arc::new(cfg),
+        data_dir: dir.path().to_str().unwrap().to_string(),
+        enforce_loopback: false,
+        memory,
+    };
+    let addr2 = addr.clone();
+    let server = tokio::spawn(async move {
+        serve(&addr2, state).await.unwrap();
+    });
+    // Give the server a moment to come up.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let parsed: std::net::SocketAddr = addr.parse().unwrap();
+    let ep = endpoint(
+        "paper-guard",
+        "paper-guard.local",
+        parsed.ip().to_string().as_str(),
+        parsed.port(),
+        "",
+    );
+    let our_version = env!("CARGO_PKG_VERSION");
+    let v = verify_and_classify(ep, our_version).await;
+    // The real service self-identifies as Paper Guard and is compatible.
+    assert_eq!(v.outcome, VerificationOutcome::Verified);
+    assert_eq!(v.endpoint.version, our_version);
+
+    server.abort();
+}

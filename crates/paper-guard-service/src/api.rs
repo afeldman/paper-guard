@@ -59,6 +59,30 @@ pub struct HealthResponse {
     pub memory_backend: String,
 }
 
+/// Response for `GET /discovery/metadata`.
+///
+/// Machine-readable identity for LAN discovery (mDNS/DNS-SD). It lets a
+/// publisher (or a human)safely confirm that a discovered endpoint really is a
+/// Paper Guard service and know which service type to advertise, without
+/// exposing any infrastructure metadata.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct DiscoveryMetadataResponse {
+    /// The service's stable identity.
+    pub service: String,
+    /// The DNS-SD service type the service registers under.
+    pub service_type: String,
+    /// The DNS-SD browse/service domain.
+    pub service_domain: String,
+    /// The version of the service (from Cargo, same as `/health`).
+    pub version: String,
+    /// Capabilities the service advertises (informational). The service is
+    /// deliberately conservative here: only `review`, plus `memory`/`qdrant`
+    /// when those backends are active and reachable.
+    pub capabilities: Vec<String>,
+    /// The advertised scheme a client should use to reach this service.
+    pub scheme: String,
+}
+
 /// Request body for `POST /reviews`.
 #[derive(Debug, serde::Deserialize)]
 pub struct SubmitReviewRequest {
@@ -206,6 +230,7 @@ pub struct MemoryListResponse {
 pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
+        .route("/discovery/metadata", get(discovery_metadata))
         .route("/reviews", post(submit_review))
         .route("/reviews/:run_id", get(review_status))
         .route("/reviews/:run_id/findings", get(review_findings))
@@ -259,6 +284,29 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
         version: env!("CARGO_PKG_VERSION").into(),
         provider: state.config.llm.provider.clone(),
         memory_backend: state.config.memory.backend.clone(),
+    })
+}
+
+/// `GET /discovery/metadata`
+async fn discovery_metadata(State(state): State<AppState>) -> Json<DiscoveryMetadataResponse> {
+    // Capabilities: reporting is informational only; never derive anything
+    // security- or manuscript-relevant from it.
+    let mut capabilities = vec!["review".to_string()];
+    match state.config.memory.backend.as_str() {
+        "qdrant" => {
+            capabilities.push("memory".to_string());
+            capabilities.push("qdrant".to_string());
+        }
+        "file" => capabilities.push("memory".to_string()),
+        _ => {}
+    }
+    Json(DiscoveryMetadataResponse {
+        service: "paper-guard".into(),
+        service_type: "_paper-guard._tcp".into(),
+        service_domain: "_paper-guard._tcp.local.".into(),
+        version: env!("CARGO_PKG_VERSION").into(),
+        capabilities,
+        scheme: "http".into(),
     })
 }
 
@@ -661,6 +709,30 @@ mod tests {
         let body: HealthResponse = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body.status, "ok");
         assert_eq!(body.service, "paper-guard");
+    }
+
+    #[tokio::test]
+    async fn discovery_metadata_endpoint_reports_service_identity() {
+        let (state, _dir) = test_state();
+        let resp = app(state)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/discovery/metadata")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: DiscoveryMetadataResponse = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body.service, "paper-guard");
+        assert_eq!(body.service_type, "_paper-guard._tcp");
+        assert_eq!(body.service_domain, "_paper-guard._tcp.local.");
+        assert!(body.capabilities.iter().any(|c| c == "review"));
+        assert!(!body.version.is_empty());
     }
 
     #[tokio::test]

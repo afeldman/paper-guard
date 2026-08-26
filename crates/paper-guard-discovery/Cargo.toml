@@ -25,3 +25,4 @@ tokio.workspace = true
 wiremock.workspace = true
 paper-guard-service.workspace = true
 paper-guard-app.workspace = true
+tempfile = "3"

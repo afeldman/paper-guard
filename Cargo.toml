@@ -12,6 +12,7 @@ members = [
     "crates/paper-guard-app",
     "crates/paper-guard-service",
     "crates/paper-guard-client",
+    "crates/paper-guard-discovery",
     "crates/paper-guard-cli",
 ]
 
@@ -60,4 +61,5 @@ paper-guard-validation = { path = "crates/paper-guard-validation" }
 paper-guard-app = { path = "crates/paper-guard-app" }
 paper-guard-service = { path = "crates/paper-guard-service" }
 paper-guard-client = { path = "crates/paper-guard-client" }
+paper-guard-discovery = { path = "crates/paper-guard-discovery" }
 

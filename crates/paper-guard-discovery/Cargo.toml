@@ -1,0 +1,27 @@
+[package]
+name = "paper-guard-discovery"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Provider-independent LAN service discovery for Paper Guard (mDNS/DNS-SD)."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+reqwest.workspace = true
+flume = "0.11"
+paper-guard-client.workspace = true
+
+[dependencies.mdns-sd]
+version = "0.11"
+default-features = false
+features = ["logging"]
+
+[dev-dependencies]
+tokio.workspace = true
+wiremock.workspace = true
+paper-guard-service.workspace = true
+paper-guard-app.workspace = true

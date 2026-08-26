@@ -544,11 +544,11 @@ async fn run_discover(config_path: Option<&str>, force: bool) -> anyhow::Result<
     // one-shot manual browse. We never probe the network implicitly.
     if !force && !disc.enabled {
         println!("LAN discovery is disabled. Enable it in your config:");
-        println!("");
+        println!();
         println!("  [discovery]");
         println!("  enabled = true");
         println!("  mode = \"manual\"   # or \"auto\"");
-        println!("");
+        println!();
         println!("then re-run `paper-guard discover`. (Use --force to run once.)");
         return Ok(());
     }

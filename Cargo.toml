@@ -37,20 +37,20 @@ futures = "0.3"
 tracing = "0.1"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 regex = "1"
 walkdir = "2"
 clap = { version = "4", features = ["derive"] }
-toml = "0.8"
+toml = "1.1"
 rust-loguru = "0.1"
 async-trait = "0.1"
 reqwest = { version = "0.13", features = ["json", "rustls", "rustls-native-certs"] }
 wiremock = "0.6"
 axum = "0.7"
 tower = "0.5"
-base64 = "0.22"
-dirs = "5"
+base64 = "0.23"
+dirs = "6"
 
 # --- Internal crates ---
 paper-guard-core = { path = "crates/paper-guard-core" }

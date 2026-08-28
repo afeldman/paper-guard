@@ -13,7 +13,10 @@ fn binary_path() -> &'static str {
 
 #[test]
 fn cli_version_reports_semver() {
-    let out = Command::new(binary_path()).arg("--version").output().unwrap();
+    let out = Command::new(binary_path())
+        .arg("--version")
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("paper-guard"), "got: {text}");
@@ -54,8 +57,14 @@ fn cli_has_review_and_inspect_subcommands() {
         .output()
         .unwrap();
     let text = String::from_utf8_lossy(&out.stdout);
-    assert!(text.contains("review"), "expected review subcommand: {text}");
-    assert!(text.contains("inspect"), "expected inspect subcommand: {text}");
+    assert!(
+        text.contains("review"),
+        "expected review subcommand: {text}"
+    );
+    assert!(
+        text.contains("inspect"),
+        "expected inspect subcommand: {text}"
+    );
     assert!(text.contains("discover"), "expected discover: {text}");
     assert!(text.contains("serve"), "expected serve: {text}");
 }

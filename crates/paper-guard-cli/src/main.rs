@@ -16,8 +16,12 @@ use paper_guard_cli::{config, logging, run};
     version
 )]
 struct Cli {
+    /// Start the local web GUI (binds to 127.0.0.1 by default).
+    #[arg(long, global = true)]
+    gui: bool,
+
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
@@ -247,7 +251,33 @@ enum MemoryCommand {
 async fn main() -> anyhow::Result<()> {
     init_logging();
     let cli = Cli::parse();
-    match cli.command {
+
+    // `paper-guard --gui` starts the local web GUI (localhost-only by default).
+    if cli.gui {
+        // `--config` is handled as part of subcommands, but for the GUI we
+        // look for the default config path (or a `paper-guard.toml` in the
+        // current directory).
+        let opts = paper_guard_gui::GuiOptions {
+            config_path: std::fs::metadata("paper-guard.toml")
+                .ok()
+                .map(|_| "paper-guard.toml".to_string()),
+            bind: None,
+            open_browser: true,
+        };
+        paper_guard_gui::start_gui(&opts).await?;
+        return Ok(());
+    }
+
+    let Some(command) = cli.command else {
+        // No subcommand and no GUI flag: print usage.
+        use clap::CommandFactory;
+        let mut cmd = Cli::command();
+        cmd.print_help()?;
+        println!();
+        return Ok(());
+    };
+
+    match command {
         Command::Init { path } => {
             AppConfig::write_default_to(&PathBuf::from(&path))?;
             println!("wrote default configuration to {path}");

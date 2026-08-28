@@ -33,3 +33,4 @@ paper-guard-report.workspace = true
 paper-guard-service.workspace = true
 paper-guard-client.workspace = true
 paper-guard-discovery.workspace = true
+paper-guard-gui.workspace = true

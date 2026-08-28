@@ -1706,6 +1706,7 @@ dependencies = [
  "paper-guard-client",
  "paper-guard-core",
  "paper-guard-discovery",
+ "paper-guard-gui",
  "paper-guard-ledger",
  "paper-guard-llm",
  "paper-guard-parser",
@@ -1774,6 +1775,25 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "wiremock",
+]
+
+[[package]]
+name = "paper-guard-gui"
+version = "0.9.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "paper-guard-app",
+ "paper-guard-core",
+ "paper-guard-ledger",
+ "paper-guard-report",
+ "paper-guard-service",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tower",
 ]
 
 [[package]]

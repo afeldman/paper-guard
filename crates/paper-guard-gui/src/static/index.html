@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paper Guard</title>
+<style>
+  :root {
+    --bg: #f4f6f8;
+    --panel: #ffffff;
+    --text: #1a202c;
+    --muted: #6b7280;
+    --border: #e2e8f0;
+    --accent: #2563eb;
+    --accent-dark: #1d4ed8;
+    --success: #059669;
+    --warning: #d97706;
+    --danger: #dc2626;
+    --disabled: #cbd5e1;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; line-height:1.5; }
+  .container { max-width:1100px; margin:0 auto; padding:1.5rem; }
+  header { background:var(--panel); border-bottom:1px solid var(--border); padding:1rem 0; }
+  header .container { display:flex; align-items:center; justify-content:space-between; }
+  h1 { font-size:1.35rem; font-weight:700; }
+  .version { color:var(--muted); font-size:0.85rem; font-weight:400; }
+  nav a { color:var(--accent); text-decoration:none; margin-left:1rem; font-weight:600; }
+  nav a:hover { color:var(--accent-dark); }
+  nav a.active { color:var(--accent-dark); border-bottom:2px solid var(--accent); }
+  main { padding:1.5rem 0; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:1.25rem; margin-bottom:1rem; }
+  .card h2 { font-size:1.1rem; font-weight:600; margin-bottom:0.75rem; }
+  .card h3 { font-size:0.95rem; font-weight:600; margin:1rem 0 0.5rem; }
+  .muted { color:var(--muted); }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
+  .grid3 { display:grid; grid-template-columns:repeat(3,1fr); gap:1rem; }
+  @media(max-width:768px){ .grid2,.grid3{ grid-template-columns:1fr; } }
+  .stat { text-align:center; padding:1rem; }
+  .stat .value { font-size:2rem; font-weight:700; color:var(--accent); }
+  .stat .label { color:var(--muted); font-size:0.85rem; margin-top:0.25rem; }
+  label { display:block; font-size:0.85rem; font-weight:600; color:var(--muted); margin-bottom:0.35rem; }
+  input[type="text"], select, textarea { width:100%; padding:0.6rem 0.75rem; border:1px solid var(--border); border-radius:6px; font-size:0.95rem; margin-bottom:1rem; background:#fff; color:var(--text); }
+  button { background:var(--accent); color:#fff; border:none; border-radius:6px; padding:0.6rem 1.25rem; font-size:0.95rem; font-weight:600; cursor:pointer; }
+  button:hover { background:var(--accent-dark); }
+  button.secondary { background:var(--disabled); color:var(--text); }
+  button.secondary:hover { background:#b0bec5; }
+  button.danger { background:var(--danger); }
+  button.danger:hover { background:#b91c1c; }
+  button:disabled { background:var(--disabled); cursor:not-allowed; }
+  .badge { display:inline-block; padding:0.2rem 0.6rem; border-radius:9999px; font-size:0.75rem; font-weight:600; }
+  .badge.success { background:#d1fae5; color:var(--success); }
+  .badge.warning { background:#fef3c7; color:var(--warning); }
+  .badge.danger { background:#fee2e2; color:var(--danger); }
+  .badge.neutral { background:#e5e7eb; color:var(--muted); }
+  .finding { border:1px solid var(--border); border-radius:8px; padding:1rem; margin-bottom:1rem; background:#fafafa; }
+  .finding .finding-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:0.5rem; }
+  .finding .finding-title { font-weight:600; }
+  .finding .severity { color:var(--warning); }
+  .finding .evidence { margin-top:0.75rem; padding:0.75rem; background:#f0f5ff; border-left:3px solid var(--accent); border-radius:4px; font-size:0.9rem; white-space:pre-wrap; }
+  .finding .evidence-label { font-size:0.75rem; font-weight:700; color:var(--muted); text-transform:uppercase; margin-bottom:0.35rem; }
+  .finding .location { font-size:0.8rem; color:var(--muted); margin-top:0.5rem; font-family:monospace; }
+  .filters { display:flex; gap:0.75rem; align-items:flex-end; margin-bottom:1rem; flex-wrap:wrap; }
+  .filters div { flex:1; min-width:150px; }
+  .report-pre { background:#1a202c; color:#e2e8f0; padding:1.25rem; border-radius:8px; font-family:monospace; white-space:pre-wrap; font-size:0.85rem; line-height:1.6; overflow-x:auto; }
+  .json-pre { background:#1a202c; color:#e2e8f0; padding:1.25rem; border-radius:8px; font-family:monospace; white-space:pre-wrap; font-size:0.8rem; overflow-x:auto; max-height:600px; overflow-y:auto; }
+  .empty { text-align:center; padding:2rem; color:var(--muted); }
+  .error { padding:0.75rem 1rem; background:#fee2e2; color:var(--danger); border-radius:6px; margin-bottom:1rem; border:1px solid #fca5a5; }
+  .reviews-list li { padding:0.75rem; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+  .reviews-list li:last-child { border-bottom:none; }
+  .reviews-list a { color:var(--accent); font-weight:600; text-decoration:none; }
+  .loading { text-align:center; padding:2rem; color:var(--muted); }
+  .spinner { display:inline-block; width:2rem; height:2rem; border:3px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin 0.8s linear infinite; margin-bottom:1rem; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .progress-steps { list-style:none; padding:0; }
+  .progress-steps li { padding:0.5rem 0; border-bottom:1px dashed var(--border); display:flex; align-items:center; gap:0.5rem; }
+  .progress-steps li:last-child { border-bottom:none; }
+  .check-mark { color:var(--success); font-weight:700; }
+  .pending-mark { color:var(--muted); }
+  .fail-mark { color:var(--danger); }
+  table { width:100%; border-collapse:collapse; }
+  th { text-align:left; font-size:0.8rem; color:var(--muted); text-transform:uppercase; padding:0.5rem; border-bottom:2px solid var(--border); }
+  td { padding:0.5rem; border-bottom:1px solid var(--border); font-size:0.9rem; }
+  tr:hover td { background:#fafafa; }
+  .json { font-family:monospace; font-size:0.8rem; white-space:pre-wrap; word-break:break-all; }
+  .flex-between { display:flex; justify-content:space-between; align-items:center; gap:1rem; }
+</style>
+</head>
+<body>
+<header>
+  <div class="container">
+    <h1>Paper Guard <span class="version" id="header-version"></span></h1>
+    <nav>
+      <a href="#" data-view="dashboard" class="active">Dashboard</a>
+      <a href="#" data-view="review">Review</a>
+      <a href="#" data-view="results">Results</a>
+      <a href="#" data-view="json">JSON</a>
+    </nav>
+  </div>
+</header>
+
+<main class="container">
+  <div id="error-box" class="error" style="display:none;"></div>
+  <div id="view-dashboard"></div>
+  <div id="view-review" style="display:none;"></div>
+  <div id="view-results" style="display:none;"></div>
+  <div id="view-json" style="display:none;"></div>
+</main>
+
+<script>
+// ---------------------------------------------------------------------------
+// API helpers (talk to the shared Paper Guard HTTP API; presentation only).
+// ---------------------------------------------------------------------------
+async function apiGet(path, params) {
+  const q = new URLSearchParams(params||{}).toString();
+  const url = path + (q ? '?'+q : '');
+  const res = await fetch(url);
+  if (!res.ok) {
+    let msg = 'HTTP '+res.status;
+    try { const j = await res.json(); if (j.error) msg = j.error; } catch {}
+    throw new Error(msg);
+  }
+  return res.json();
+}
+async function apiPost(path, body) {
+  const res = await fetch(path, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body||{})
+  });
+  if (!res.ok) {
+    let msg = 'HTTP '+res.status;
+    try { const j = await res.json(); if (j.error) msg = j.error; } catch {}
+    throw new Error(msg);
+  }
+  return res.json();
+}
+async function apiGetText(path) {
+  const res = await fetch(path);
+  if (!res.ok) {
+    let msg = 'HTTP '+res.status;
+    try { const j = await res.json(); if (j.error) msg = j.error; } catch {}
+    throw new Error(msg);
+  }
+  return res.text();
+}
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let currentView = 'dashboard';
+let currentRunId = null;
+let currentStyle = 'neutral';
+let currentFilter = { reviewer:'all', severity:'all', category:'all', status:'all' };
+
+// ---------------------------------------------------------------------------
+// Router
+// ---------------------------------------------------------------------------
+document.querySelectorAll('nav a').forEach(a => {
+  a.addEventListener('click', e => {
+    e.preventDefault();
+    showView(a.dataset.view);
+  });
+});
+
+function showView(view) {
+  currentView = view;
+  document.querySelectorAll('nav a').forEach(a => {
+    a.classList.toggle('active', a.dataset.view === view);
+  });
+  ['dashboard','review','results','json'].forEach(v => {
+    document.getElementById('view-'+v).style.display = v === view ? '' : 'none';
+  });
+  if (view === 'dashboard') renderDashboard();
+  if (view === 'review') renderReview();
+  if (view === 'results') renderResults();
+  if (view === 'json') renderJson();
+}
+
+function showError(msg) {
+  const box = document.getElementById('error-box');
+  box.textContent = String(msg || 'Error');
+  box.style.display = '';
+  setTimeout(()=>{ box.style.display='none'; }, 6000);
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard view
+// ---------------------------------------------------------------------------
+async function renderDashboard() {
+  const el = document.getElementById('view-dashboard');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading…</p></div>';
+  try {
+    const dash = await apiGet('/gui/dashboard');
+    el.innerHTML = `
+      <div class="grid3" style="margin-bottom:1rem;">
+        <div class="card stat"><div class="value">${escapeHtml(dash.version)}</div><div class="label">Version</div></div>
+        <div class="card stat"><div class="value">${escapeHtml(dash.provider_label)}</div><div class="label">LLM Provider</div></div>
+        <div class="card stat"><div class="value">${dash.recent_runs.length}</div><div class="label">Recent Reviews</div></div>
+      </div>
+
+      <div class="card">
+        <h2>Configuration</h2>
+        <table>
+          <tr><td>LLM Provider</td><td><code>${escapeHtml(dash.llm_provider)}</code></td></tr>
+          <tr><td>Model</td><td><code>${escapeHtml(dash.model)}</code></td></tr>
+          <tr><td>Base URL</td><td><code>${escapeHtml(dash.base_url)}</code></td></tr>
+          <tr><td>Structured Output</td><td><code>${escapeHtml(dash.structured_output)}</code></td></tr>
+          <tr><td>Memory Backend</td><td><code>${escapeHtml(dash.memory_backend)}</code></td></tr>
+          <tr><td>Data Directory</td><td><code>${escapeHtml(dash.data_dir)}</code></td></tr>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>Recent Reviews</h2>
+        ${dash.recent_runs.length === 0
+          ? '<p class="empty">No reviews yet. Go to <a href="#" onclick="showView(\'review\');return false;">Review</a> to start one.</p>'
+          : renderRunList(dash.recent_runs)}
+      </div>
+    `;
+  } catch (e) { el.innerHTML = '<div class="card"><p class="error">'+escapeHtml(e.message)+'</p></div>'; }
+}
+
+function renderRunList(runs) {
+  const rows = runs.map(r => `
+    <tr>
+      <td><a href="#" onclick="openRun('${r.run_id}');return false;">${escapeHtml(r.run_id)}</a></td>
+      <td>${escapeHtml(r.source_format)}</td>
+      <td>${r.findings_count}</td>
+      <td><span class="badge ${r.status==='completed'?'success':r.status==='running'?'warning':'neutral'}">${escapeHtml(r.status)}</span></td>
+      <td class="muted">${escapeHtml(r.timestamp)}</td>
+    </tr>`).join('');
+  return `<table><thead><tr><th>Run</th><th>Format</th><th>Findings</th><th>Status</th><th>Time</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function openRun(runId) {
+  currentRunId = runId;
+  showView('results');
+}
+
+// ---------------------------------------------------------------------------
+// Review view
+// ---------------------------------------------------------------------------
+async function renderReview() {
+  const el = document.getElementById('view-review');
+  el.innerHTML = `
+    <div class="card">
+      <h2>Start a Review</h2>
+      <p class="muted" style="margin-bottom:1rem;">Select a manuscript and review it with your configured local LLM provider.</p>
+      <div class="grid2">
+        <div>
+          <label>Manuscript (.tex or .pdf) — absolute or relative path</label>
+          <input type="text" id="review-source" placeholder="/path/to/paper.tex">
+        </div>
+        <div>
+          <label>Presentation style</label>
+          <select id="review-style">
+            <option value="neutral">Neutral</option>
+            <option value="funny">Funny</option>
+            <option value="insulting">Insulting</option>
+          </select>
+        </div>
+      </div>
+      <button id="btn-start-review">Start Review</button>
+      <div id="review-progress" style="display:none;margin-top:1rem;"></div>
+    </div>
+  `;
+
+  document.getElementById('btn-start-review').addEventListener('click', async () => {
+    const source = document.getElementById('review-source').value.trim();
+    currentStyle = document.getElementById('review-style').value;
+    if (!source) { showError('Please enter a manuscript path'); return; }
+    const btn = document.getElementById('btn-start-review');
+    btn.disabled = true;
+    btn.textContent = 'Reviewing…';
+
+    const progressEl = document.getElementById('review-progress');
+    progressEl.style.display = '';
+    progressEl.innerHTML = '<div class="loading"><div class="spinner"></div><p>Starting review… This may take a moment with a local model.</p></div>';
+
+    try {
+      const result = await apiPost('/reviews', { source: source });
+      currentRunId = result.run_id;
+      progressEl.innerHTML = '<p class="muted" style="text-align:center;">Review submitted. Opening results…</p>';
+      await pollRunStatus(result.run_id);
+      showView('results');
+    } catch (e) {
+      progressEl.innerHTML = '';
+      showError(e.message);
+      btn.disabled = false;
+      btn.textContent = 'Start Review';
+    }
+  });
+}
+
+async function pollRunStatus(runId) {
+  const el = document.getElementById('review-progress');
+  const reviewerNames = ['Scientific Reviewer','Adversarial Reviewer','Evidence Reviewer','Reference Reviewer','Figure Reviewer'];
+  const maxAttempts = 300; // 5 min at 1s
+  for (let i=0; i<maxAttempts; i++) {
+    try {
+      const status = await apiGet('/reviews/'+runId);
+      el.innerHTML = renderProgress(status, reviewerNames);
+      if (status.status !== 'running' && status.status !== 'started') {
+        return;
+      }
+    } catch { /* run may not be complete yet */ }
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  el.innerHTML += '<p class="muted">Timed out waiting for review to complete. Check the Results tab.</p>';
+}
+
+function renderProgress(status, reviewerNames) {
+  const agents = status.reviewers || [];
+  const js = status.judge_entries;
+  const complete = status.status === 'completed';
+  const rows = reviewerNames.map(name => {
+    const agent = agents.find(a => a.agent.toLowerCase().includes(name.toLowerCase().split(' ')[0].toLowerCase()));
+    if (!agent) return `<li><span class="pending-mark">○</span> <span>${escapeHtml(name)}</span> <span class="muted">pending</span></li>`;
+    if (agent.status === 'success') return `<li><span class="check-mark">✓</span> <span>${escapeHtml(name)}</span> <span class="muted">${agent.finding_count} findings</span></li>`;
+    if (agent.status === 'failed') return `<li><span class="fail-mark">✗</span> <span>${escapeHtml(name)}</span> <span class="danger">failed</span></li>`;
+    return `<li><span class="pending-mark">○</span> <span>${escapeHtml(name)}</span> <span class="muted">pending</span></li>`;
+  }).join('');
+  return `
+    <div class="card">
+      <h2>Review Progress</h2>
+      <ul class="progress-steps">
+        ${rows}
+        <li>${complete ? '<span class="check-mark">✓</span>' : '<span class="pending-mark">○</span>'} <span>Judge</span> ${complete ? '<span class="badge success">complete</span>' : '<span class="muted">pending</span>'}</li>
+      </ul>
+      <p style="margin-top:1rem;font-weight:600;">Findings: ${status.findings_opened ?? 0}</p>
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Results view
+// ---------------------------------------------------------------------------
+async function renderResults() {
+  const el = document.getElementById('view-results');
+  if (!currentRunId) {
+    el.innerHTML = '<div class="card"><h2>Results</h2><p class="empty">No review selected. Pick a review from the Dashboard.</p></div>';
+    return;
+  }
+  el.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading…</p></div>';
+  try {
+    const status = await apiGet('/reviews/'+currentRunId);
+    const findings = await apiGet('/reviews/'+currentRunId+'/findings');
+
+    // Build unique filters from data
+    const reviewers = [...new Set(findings.findings.map(f => f.reviewer_kind))];
+    const severities = [...new Set(findings.findings.map(f => f.severity))];
+    const categories = [...new Set(findings.findings.map(f => f.category))];
+    const statuses = [...new Set(findings.findings.map(f => f.status || 'open'))];
+
+    el.innerHTML = `
+      <div class="flex-between" style="margin-bottom:1rem;">
+        <div>
+          <h2 style="margin-bottom:0.25rem;">Findings — ${escapeHtml(currentRunId)}</h2>
+          <span class="muted">${findings.findings.length} finding(s)</span>
+        </div>
+        <div style="display:flex;gap:0.5rem;">
+          <select id="results-style" style="width:auto;margin-bottom:0;">
+            <option value="neutral" ${currentStyle==='neutral'?'selected':''}>Neutral</option>
+            <option value="funny" ${currentStyle==='funny'?'selected':''}>Funny</option>
+            <option value="insulting" ${currentStyle==='insulting'?'selected':''}>Insulting</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="filters card">
+        <div><label>Reviewer</label><select id="f-reviewer"><option value="all">All</option>${reviewers.map(r=>`<option>${escapeHtml(r)}</option>`).join('')}</select></div>
+        <div><label>Severity</label><select id="f-severity"><option value="all">All</option>${severities.map(s=>`<option>${escapeHtml(s)}</option>`).join('')}</select></div>
+        <div><label>Category</label><select id="f-category"><option value="all">All</option>${categories.map(c=>`<option>${escapeHtml(c)}</option>`).join('')}</select></div>
+        <div><label>Status</label><select id="f-status"><option value="all">All</option>${statuses.map(s=>`<option>${escapeHtml(s)}</option>`).join('')}</select></div>
+      </div>
+
+      <div id="findings-list"></div>
+      <div class="card">
+        <h2>Human-Readable Report</h2>
+        <p class="muted" style="margin-bottom:0.5rem;">Deterministic, style-switchable presentation of the canonical RunRecord.</p>
+        <button class="secondary" id="btn-toggle-report">Show Report</button>
+        <button class="secondary" id="btn-toggle-json" style="margin-left:0.5rem;">Show JSON</button>
+        <div id="report-area" style="display:none;margin-top:1rem;"></div>
+      </div>
+    `;
+
+    // Apply filters
+    const applyFilters = () => {
+      const fr = document.getElementById('f-reviewer').value;
+      const fs = document.getElementById('f-severity').value;
+      const fc = document.getElementById('f-category').value;
+      const fu = document.getElementById('f-status').value;
+      const filtered = findings.findings.filter(f =>
+        (fr==='all'||f.reviewer_kind===fr) &&
+        (fs==='all'||f.severity===fs) &&
+        (fc==='all'||f.category===fc) &&
+        (fu==='all'||(f.status||'open')===fu)
+      );
+      document.getElementById('findings-list').innerHTML = renderFindings(filtered);
+    };
+
+    ['f-reviewer','f-severity','f-category','f-status'].forEach(id => {
+      document.getElementById(id).addEventListener('change', applyFilters);
+    });
+
+    document.getElementById('results-style').addEventListener('change', async e => {
+      currentStyle = e.target.value;
+      // Style switch is presentation-only — never a new LLM request.
+      // Just refresh the report / findings rendering.
+      await renderFindingsFromServer();
+    });
+
+    attachReportButtons(findings);
+    applyFilters();
+
+  } catch (e) { el.innerHTML = '<div class="card"><p class="error">'+escapeHtml(e.message)+'</p></div>'; }
+}
+
+function renderFindings(findings) {
+  if (findings.length === 0) return '<p class="empty">No findings match the current filters.</p>';
+  return findings.map(f => {
+    const loc = escapeHtml(f.location || '');
+    return `
+      <div class="finding">
+        <div class="finding-header">
+          <div class="finding-title">${escapeHtml(f.finding_id)} — ${escapeHtml(f.finding)}</div>
+          <div><span class="badge ${sevClass(f.severity)}">${escapeHtml(f.severity)}</span> <span class="badge neutral">${escapeHtml(f.category)}</span></div>
+        </div>
+        <div class="muted" style="font-size:0.85rem;">Reviewer: <strong>${escapeHtml(f.reviewer_kind)}</strong> · Confidence: <strong>${escapeHtml(f.confidence ?? '—')}</strong></div>
+        ${f.claim_id ? `<div class="muted" style="font-size:0.85rem;margin-top:0.25rem;">Affected claim: <strong>${escapeHtml(f.claim_id)}</strong></div>` : ''}
+        ${f.evidence ? `<div class="evidence"><div class="evidence-label">Evidence</div>${escapeHtml(f.evidence)}</div>` : ''}
+        ${f.recommendation ? `<div class="muted" style="margin-top:0.5rem;"><strong>Recommendation:</strong> ${escapeHtml(f.recommendation)}</div>` : ''}
+        ${loc ? `<div class="location">📍 ${loc}</div>` : ''}
+      </div>`;
+  }).join('');
+}
+
+async function renderFindingsFromServer() {
+  try {
+    const findings = await apiGet('/reviews/'+currentRunId+'/findings');
+    const list = document.getElementById('findings-list');
+    if (list) list.innerHTML = renderFindings(findings.findings);
+  } catch {}
+}
+
+function sevClass(s) {
+  s = (s||'').toLowerCase();
+  if (s.includes('critical')||s.includes('major')) return 'danger';
+  if (s.includes('minor')||s.includes('warning')) return 'warning';
+  return 'neutral';
+}
+
+function attachReportButtons(findingsData) {
+  const reportBtn = document.getElementById('btn-toggle-report');
+  const jsonBtn = document.getElementById('btn-toggle-json');
+  const area = document.getElementById('report-area');
+  let shown = null;
+
+  const toggleReport = async () => {
+    if (shown === 'report') { area.style.display='none'; shown=null; reportBtn.textContent='Show Report'; return; }
+    area.style.display='';
+    area.innerHTML = '<div class="loading"><p>Loading report…</p></div>';
+    try {
+      const text = await apiGetText('/gui/reviews/'+currentRunId+'/report?style='+currentStyle);
+      area.innerHTML = '<div class="report-pre">'+escapeHtml(text)+'</div>';
+    } catch(e){ area.innerHTML = '<p class="error">'+escapeHtml(e.message)+'</p>'; }
+    shown='report'; reportBtn.textContent='Hide Report'; jsonBtn.textContent='Show JSON';
+  };
+
+  const toggleJson = async () => {
+    if (shown === 'json') { area.style.display='none'; shown=null; jsonBtn.textContent='Show JSON'; return; }
+    area.style.display='';
+    area.innerHTML = '<div class="loading"><p>Loading JSON…</p></div>';
+    try {
+      const json = await apiGetText('/gui/reviews/'+currentRunId+'/json');
+      area.innerHTML = '<div class="json-pre">'+escapeHtml(json)+'</div>';
+    } catch(e){ area.innerHTML = '<p class="error">'+escapeHtml(e.message)+'</p>'; }
+    shown='json'; reportBtn.textContent='Show Report'; jsonBtn.textContent='Hide JSON';
+  };
+
+  reportBtn.addEventListener('click', toggleReport);
+  jsonBtn.addEventListener('click', toggleJson);
+}
+
+// ---------------------------------------------------------------------------
+// JSON view
+// ---------------------------------------------------------------------------
+async function renderJson() {
+  const el = document.getElementById('view-json');
+  if (!currentRunId) {
+    el.innerHTML = '<div class="card"><h2>JSON Export</h2><p class="empty">No review selected. Pick a review from the Dashboard.</p></div>';
+    return;
+  }
+  el.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading…</p></div>';
+  try {
+    const json = await apiGetText('/gui/reviews/'+currentRunId+'/json');
+    el.innerHTML = `
+      <div class="flex-between" style="margin-bottom:1rem;">
+        <div><h2>Canonical JSON — ${escapeHtml(currentRunId)}</h2>
+        <p class="muted" style="margin-top:0.25rem;">The canonical machine-readable RunRecord (same data as the CLI writes to the ledger).</p></div>
+        <button onclick="downloadJson()">Download JSON</button>
+      </div>
+      <div class="card"><div class="json-pre">${escapeHtml(json)}</div></div>
+    `;
+    window.__pgJson = json;
+  } catch (e) { el.innerHTML = '<div class="card"><p class="error">'+escapeHtml(e.message)+'</p></div>'; }
+}
+
+function downloadJson() {
+  const json = window.__pgJson || '';
+  const blob = new Blob([json], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = currentRunId+'.json'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ---------------------------------------------------------------------------
+// Utils
+// ---------------------------------------------------------------------------
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  })[c]);
+}
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+(async function init() {
+  try {
+    const health = await apiGet('/health');
+    document.getElementById('header-version').textContent = 'v'+health.version;
+  } catch {}
+  renderDashboard();
+})();
+</script>
+</body>
+</html>

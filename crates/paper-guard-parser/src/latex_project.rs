@@ -284,10 +284,27 @@ impl Resolver {
     }
 }
 
+/// Filesystem-relative path with forward-slash separators so provenance is
+/// portable across platforms (a `/`-joined relative path is stable whether the
+/// resolver ran on POSIX or Windows, unlike an OS-native separator).
 fn relative_to(root_dir: &Path, path: &Path) -> String {
-    path.strip_prefix(root_dir)
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| path.to_string_lossy().into_owned())
+    let rel = path.strip_prefix(root_dir).unwrap_or(path);
+    let mut out = String::new();
+    for (i, comp) in rel.components().enumerate() {
+        use std::path::Component;
+        let name = match comp {
+            Component::Normal(n) => n.to_string_lossy().into_owned(),
+            // Preserve `..`/`.`/prefix semantics so the string still reflects
+            // the original path shape; normal file components dominate in
+            // practice once strip_prefix succeeds.
+            other => other.as_os_str().to_string_lossy().into_owned(),
+        };
+        if i > 0 {
+            out.push('/');
+        }
+        out.push_str(&name);
+    }
+    out
 }
 
 /// The display path of a file for the `include_parent` field.

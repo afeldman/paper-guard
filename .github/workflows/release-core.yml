@@ -377,7 +377,7 @@ jobs:
   # ---------------------------------------------------------------------------
   checksums:
     name: checksums
-    needs: [resolve, build]
+    needs: [resolve, build, source]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -386,11 +386,19 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+      - name: Download source archive
+        uses: actions/download-artifact@v4
+        with:
+          name: source-tarball
+          path: artifacts
+          merge-multiple: true
       - name: Generate SHA256SUMS
         run: |
           cd artifacts
           ls -la
-          find . -type f -name '*.zip' -exec sha256sum {} \; | sort > SHA256SUMS
+          # Cover EVERY release artifact: the 5 platform ZIPs and the source
+          # archive (.tar.gz) that ships alongside them.
+          find . -type f \( -name '*.zip' -o -name '*.tar.gz' \) -exec sha256sum {} \; | sort > SHA256SUMS
           cat SHA256SUMS
       - name: Verify checksums
         run: |
@@ -405,6 +413,7 @@ jobs:
           path: |
             artifacts/SHA256SUMS
             artifacts/*.zip
+            artifacts/*.tar.gz
 
   # ---------------------------------------------------------------------------
   # Source archive (present in every release alongside the binaries).
@@ -452,10 +461,6 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: release-artifacts
-          path: dist
-      - uses: actions/download-artifact@v4
-        with:
-          name: source-tarball
           path: dist
       - name: Generate release notes
         env:

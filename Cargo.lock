@@ -1387,7 +1387,7 @@ dependencies = [
 
 [[package]]
 name = "paper-guard-agents"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1400,7 +1400,7 @@ dependencies = [
 
 [[package]]
 name = "paper-guard-app"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1429,7 +1429,7 @@ dependencies = [
 
 [[package]]
 name = "paper-guard-cli"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1458,7 +1458,7 @@ dependencies = [
 
 [[package]]
 name = "paper-guard-client"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1479,7 +1479,7 @@ dependencies = [
 
 [[package]]
 name = "paper-guard-core"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "chrono",
  "hex",
@@ -1492,7 +1492,7 @@ dependencies = [
 
 [[package]]
 name = "paper-guard-discovery"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1512,7 +1512,7 @@ dependencies = [
 
 [[package]]
 name = "paper-guard-ledger"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1524,7 +1524,7 @@ dependencies = [
 
 [[package]]
 name = "paper-guard-llm"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1541,7 +1541,7 @@ dependencies = [
 
 [[package]]
 name = "paper-guard-parser"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1554,7 +1554,7 @@ dependencies = [
 
 [[package]]
 name = "paper-guard-renderer"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "paper-guard-core",
@@ -1565,7 +1565,7 @@ dependencies = [
 
 [[package]]
 name = "paper-guard-report"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "paper-guard-core",
@@ -1577,7 +1577,7 @@ dependencies = [
 
 [[package]]
 name = "paper-guard-review"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1596,7 +1596,7 @@ dependencies = [
 
 [[package]]
 name = "paper-guard-service"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1615,7 +1615,7 @@ dependencies = [
 
 [[package]]
 name = "paper-guard-validation"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "paper-guard-core",

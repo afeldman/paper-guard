@@ -46,9 +46,16 @@ async fn gui_index_serves_html() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let ct = res.headers().get(header::CONTENT_TYPE).unwrap().to_str().unwrap();
+    let ct = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(ct.contains("text/html"));
-    let body = axum::body::to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+    let body = axum::body::to_bytes(res.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
     let html = String::from_utf8(body.to_vec()).unwrap();
     assert!(html.contains("Paper Guard"));
     assert!(html.contains("id=\"view-dashboard\""));
@@ -71,7 +78,9 @@ async fn gui_dashboard_reports_config() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+    let body = axum::body::to_bytes(res.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["llm_provider"], "mock");
     assert_eq!(json["service_bind"], "127.0.0.1:8080");
@@ -139,7 +148,9 @@ We used mock data.
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+    let body = axum::body::to_bytes(res.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["status"], "completed");
     let run_id = json["run_id"].as_str().unwrap().to_string();
@@ -156,7 +167,9 @@ We used mock data.
         .await
         .unwrap();
     assert_eq!(res2.status(), StatusCode::OK);
-    let body2 = axum::body::to_bytes(res2.into_body(), 1024 * 1024).await.unwrap();
+    let body2 = axum::body::to_bytes(res2.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
     let json2: serde_json::Value = serde_json::from_slice(&body2).unwrap();
     assert_eq!(json2["run_id"], run_id);
     assert_eq!(json2["status"], "completed");

@@ -34,7 +34,8 @@ The system is split into focused crates so that no layer depends on the rest:
 | `paper-guard-report` | **Presentation layer**: human-readable review reports + the three purely presentational output styles (`neutral`/`funny`/`insulting`). Renders from canonical run records and never alters them. |
 | `paper-guard-service`| **Optional HTTP service mode**: minimal REST API over the shared application layer. |
 | `paper-guard-client` | **HTTP client for a remote service** (M3.5). Transport only; maps wire DTOs onto the same domain representations. Never instantiates the pipeline. |
-| `paper-guard-cli`    | Command-line interface (thin shell over `paper-guard-app`). |
+| `paper-guard-gui`   | **Local web GUI** (v1.0): a small, self-contained Single-Page Application (embedded HTML/JS) served by axum alongside the existing service API. Presentation/control layer only — it reuses the domain/application/ledger/report layers verbatim and cannot introduce a second review engine. |
+| `paper-guard-cli`    | Command-line interface (thin shell over `paper-guard-app`). Adds `paper-guard --gui` as a top-level entry point for the local web GUI. |
 
 ### 2.1b Standalone vs Service
 
@@ -661,22 +662,24 @@ Explicit `--server` remains the deterministic fallback. Discovery remains
 - `.github/workflows/release.yml` (triggered on an annotated, signed `v*` tag)
   runs an authoritative `validation` job (fmt + test + clippy + release build),
   then builds release binaries on the supported cross-platform matrix:
-  `aarch64-apple-darwin` (native `macos-14` Apple Silicon), `aarch64-unknown-linux-gnu`
-  (via `cross` containerised build on `ubuntu-latest`), `x86_64-unknown-linux-gnu`
-  (native `ubuntu-latest`), and `x86_64-pc-windows-msvc` (native `windows-latest`,
-  MSVC — never MinGW). macOS Intel (`x86_64-apple-darwin`) is intentionally **not**
-  shipped in this milestone.
+  `aarch64-apple-darwin` (native `macos-14` Apple Silicon), `x86_64-apple-darwin`
+  (native `macos-13` Intel), `aarch64-unknown-linux-gnu` (via `cross`
+  containerised build on `ubuntu-latest`), `x86_64-unknown-linux-gnu` (native
+  `ubuntu-latest`), and `x86_64-pc-windows-msvc` (native `windows-latest`,
+  MSVC — never MinGW). All five platforms are built by GitHub Actions; no
+  developer machine is used for release binaries.
 - Each release binary is **smoke-tested** in CI (`--version`, `--help`, `info`,
   `diagnostics --paths`), embedded with the Git commit via
   `PAPER_GUARD_BUILD_COMMIT` (provenance), packaged with `QUICKSTART.md` and the
-  LICENSE into a versioned archive named by its Rust target triple
-  (`paper-guard-vX.Y.Z-<target>.zip` or `.tar.gz`), and covered by a generated
+  LICENSE into a versioned archive named by its friendly platform label
+  (`paper-guard-v1.0.0-macos-arm64.zip`, `-macos-x86_64.zip`, `-linux-arm64.tar.gz`,
+  `-linux-x86_64.tar.gz`, `-windows-x86_64.zip`), and covered by a generated
   `SHA256SUMS` that is verified before publishing.
 - A **Trivy security gate** runs before the release is published; the release
   job only runs after builds, checksums, the Trivy gate, and the source archive
   all succeed.
 - Windows is built **natively** in CI; cross-compilation from macOS is not the
-  authoritative release process (§34).
+  authoritative release process.
 - **Dependabot** (`.github/dependabot.yml`) monitors **Cargo** and **GitHub
   Actions** with weekly, bounded update PRs (security updates remain enabled).
   Dependency updates must pass the normal CI (fmt, test, clippy, build, Trivy)
@@ -697,4 +700,142 @@ Explicit `--server` remains the deterministic fallback. Discovery remains
 
 See `docs/windows.md` for the researcher-facing team-client quickstart and
 `QUICKSTART.md` for the research workflow.
+
+---
+
+## M10 / v1.0 — Final Input Support, Web GUI, Hardening & Production Release
+
+### LaTeX projects (`\input` / `\include`)
+
+Paper Guard v1.0 resolves multi-file LaTeX projects deterministically,
+in document order (never alphabetically), and never executes LaTeX:
+
+- **Root**: the directory containing the explicitly supplied root `.tex` is the
+  project root unless an existing explicit project-root configuration exists.
+- **Resolution**: `\input`/`\include` references are resolved relative to the
+  *including* file's directory; nested includes are supported; extensionless
+  references and `.tex` extensions both work.
+- **Security**: referenced files must remain inside the authorized project
+  root. `../private/file`, absolute paths, and symlinks pointing outside the
+  root are blocked (fail closed) — the file is never read.
+- **Diagnostics**: missing includes surface as structural diagnostics
+  (`LATEX_INCLUDE_NOT_FOUND`); cycles produce a deterministic
+  `LATEX_INCLUDE_CYCLE`. The process never crashes and never silently skips an
+  include.
+- **Provenance**: every fragment retains `source_type`, file, line, include
+  parent, and include depth (`latex_project::LatexFragment`), which survives
+  parser → reviewer → finding → judge → ledger → JSON → human report.
+- **Bounds**: include depth (64) and total fragment count (1024) are cased to
+  prevent exponential expansion of pathological include graphs. Source content
+  is cached within a review run (a file included twice is read once).
+
+### PDF manuscripts
+
+Paper Guard v1.0 adds PDF as a first-class review source:
+
+- `paper-guard review paper.pdf` enters the **same** canonical paper model and
+  the **same** reviewers/judge/ledger/report pipeline as LaTeX.
+- Text extraction runs entirely in-process via the pure-Rust `lopdf` crate:
+  no shell, no JavaScript, no embedded media, no OCR.
+- Each extracted paragraph carries page provenance (`SourceLocation.page`), so
+  every finding can be traced to `PDF page N`.
+- Structured failure behaviour: `PDF_INVALID` (malformed), `PDF_ENCRYPTED`
+  (password/encrypt trailer), `PDF_TEXT_UNAVAILABLE` (image-only or no
+  extractable text), `PDF_PAGE_UNAVAILABLE` (a page fails extraction). Paper
+  Guard never fabricates figure content and never silently reviews an
+  incomplete PDF.
+- Extraction is bounded (`PDF_PAGE_CONTENT_LIMIT` = 64 MiB decompressed per
+  page) and deterministic.
+
+### Document Source abstraction
+
+All supported inputs converge into a single canonical paper representation via
+[`paper_guard_parser::DocumentSource`]:
+
+```text
+.tex (single file)
+LaTeX project (\input / \include)
+PDF
+   ↓
+DocumentSource
+   ↓
+Canonical Paper Model
+   ↓
+Reviewers → Judge → Ledger → Report / JSON
+```
+
+There are **no** separate reviewer implementations for PDF vs LaTeX. The
+canonical representation is the single source of truth.
+
+### Local web GUI (`paper-guard --gui`)
+
+Paper Guard v1.0 ships a **small local web GUI** as a presentation/control
+layer only. It must not introduce a second review engine or duplicate domain
+logic.
+
+```text
+                 ┌── CLI
+                 │
+Canonical RunRecord
+                 │
+                 └── Local Web GUI
+                         │
+                         ▼
+                  Paper Guard API
+                         │
+                         ▼
+                  Existing pipeline
+```
+
+The GUI reuses `paper-guard-service` (the HTTP API) and `paper-guard-app` (the
+shared pipeline) verbatim. The frontend is an embedded single-page application
+(inlined HTML/JS — no CDN, no external assets) served by axum.
+
+**Startup** (`paper_guard_gui::start_gui`):
+
+1. load the config
+2. build the `AppState` (same as the CLI/serve)
+3. build the combined router = existing service API + GUI routes
+4. bind to `127.0.0.1` (or `[::1]`) by default; refuse `0.0.0.0` / `::` unless
+   `[service] allow_external_bind = true` is explicitly set
+5. select an available port (port `0` in `[service] bind` → OS-assigned)
+6. print the banner and URL, optionally open the default browser
+
+**Views**:
+
+| View | Purpose |
+|------|---------|
+| Dashboard | version, provider/model, base URL, structured-output mode, memory backend, data dir, recent runs |
+| Review | select a `.tex` or `.pdf`, start a review via `POST /reviews`, see per-reviewer progress + Judge completion |
+| Results | findings (severity, confidence, evidence, claim, location), filters by reviewer/severity/category/status, human-readable report, style switch |
+| JSON | canonical RunRecord as pretty JSON, downloadable |
+
+**Style switching** in the GUI is *presentation-only*. The browser requests the
+report with `?style=neutral|funny|insulting`; the server selects a deterministic
+formatter over the canonical `RunRecord`. No LLM request is ever triggered by a
+style switch, and no literal in the `RunRecord` is altered.
+
+**Security model**: the GUI treats paper content as untrusted input; it never
+executes commands from papers; it never uploads to third-party services; it never
+stores API keys in the browser (keys are read from the environment server-side);
+it never exposes non-localhost by default. All mutations go through the same
+`paper-guard-app` pipeline / `paper-guard-service` API used by the CLI.
+
+**Scientific integrity**: the GUI cannot bypass reviewer validation, Judge
+validation, evidence isolation, authorization boundaries, revision approval, or
+ledger rules. It cannot modify a canonical finding directly—all state changes
+flow through the shared domain/API layers.
+
+### Configuration Wizard — planned for v1.1
+
+A future **v1.1** will add an interactive Configuration Wizard
+(`paper-guard --wizard` or an equivalent GUI entry point) that guides a
+researcher through Paper Guard configuration, LLM provider selection (local vs
+remote), LM Studio / Ollama endpoint entry, model selection (with local
+OpenAI-compatible model detection), structured output mode, reviewer
+configuration, memory configuration, discovery configuration, output/report
+preferences, configuration validation, test connection, and saving the config.
+
+> This is **planning only** for the v1.1 milestone. The wizard is not
+> implemented in v1.0.
 

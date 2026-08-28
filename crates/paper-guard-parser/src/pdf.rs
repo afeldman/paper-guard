@@ -68,11 +68,7 @@ pub fn parse_pdf(source_file: &str, bytes: &[u8]) -> anyhow::Result<Document> {
         ));
     }
 
-    let page_numbers: Vec<u32> = pdf
-        .get_pages()
-        .into_iter()
-        .map(|(page_no, _)| page_no)
-        .collect();
+    let page_numbers: Vec<u32> = pdf.get_pages().into_keys().collect();
 
     // Extract text per page, in order, so we can record page provenance.
     let mut per_page: Vec<(u32, String)> = Vec::new();

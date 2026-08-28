@@ -708,7 +708,7 @@ trivy fs .
 ```
 
 The test suite is fully offline — no test makes a real API call. As of the
-v0.9.0 checkpoint the workspace has **263 passing tests** with a clean
+v1.0.0 release the workspace has **286 passing tests** with a clean
 `clippy -D warnings` and clean `fmt --check`. An optional live end-to-end
 harness runs against a real endpoint only when explicitly enabled and never in
 CI (see [`docs/architecture.md`](docs/architecture.md)).
@@ -733,11 +733,131 @@ The repository is guarded continuously:
 
 ## Version / release status
 
-Current release: **v0.9.0**, which includes the human-readable report and the
-`neutral` / `funny` / `insulting` presentation styles.
+Current release: **v1.0.0** — the first complete researcher-facing release.
+
+### v1.0 highlights
+
+* **Inputs**: single `.tex`, LaTeX projects (`\input` / `\include`), and `.pdf`.
+* **LaTeX project resolution**: deterministic, document-order `\input` /
+  `\include` expansion with provenance; path-traversal / symlink-escape
+  protection; cycle and missing-include diagnostics.
+* **PDF**: reliable in-process text extraction (no OCR, no embedded code
+  execution) with per-page provenance; malformed / encrypted / image-only PDFs
+  fail explicitly.
+* **Local LLMs**: LM Studio and Ollama via the generic OpenAI-compatible
+  provider; JSON Schema structured output.
+* **GUI**: `paper-guard --gui` starts a local web interface (localhost-only).
+* **Human + machine output**: `neutral` / `funny` / `insulting` report styles
+  and canonical JSON artifacts.
+* **Platforms**: macOS arm64/x86_64, Linux arm64/x86_64, Windows x86_64.
 
 Review memory is retrieval-based; model training / fine-tuning (LoRA, QLoRA) is
 deliberately not part of the current workflow. See [Review Memory](#14-review-memory).
+
+### Configuration Wizard — planned for v1.1
+
+Version 1.1 will add an interactive **Configuration Wizard** (`paper-guard
+--wizard`) that guides a researcher through:
+
+1. Paper Guard configuration
+2. LLM provider (local vs remote)
+3. LM Studio / Ollama endpoint
+4. Model selection (incl. detecting local OpenAI-compatible models)
+5. Structured output mode
+6. Reviewer configuration
+7. Memory configuration
+8. Discovery configuration
+9. Output / report preferences
+10. Configuration validation + test connection
+11. Save configuration
+
+> **v1.1 is planning only.** The wizard is not implemented in v1.0.
+
+---
+
+## Quickstart
+
+### Install
+
+Download the appropriate binary for your platform from the GitHub Release:
+
+| Platform | Archive |
+| --- | --- |
+| macOS ARM64 | `paper-guard-1.0.0-macos-arm64.zip` |
+| macOS x86_64 | `paper-guard-1.0.0-macos-x86_64.zip` |
+| Linux ARM64 | `paper-guard-1.0.0-linux-arm64.tar.gz` |
+| Linux x86_64 | `paper-guard-1.0.0-linux-x86_64.tar.gz` |
+| Windows x86_64 | `paper-guard-1.0.0-windows-x86_64.zip` |
+
+Each archive contains the `paper-guard` binary, `QUICKSTART.md`, and `LICENSE`.
+Verify the checksum against `SHA256SUMS` from the Release.
+
+### Review a paper
+
+```bash
+# Single LaTeX file
+paper-guard review paper.tex
+
+# LaTeX project (with \input / \include)
+paper-guard review main.tex
+
+# PDF manuscript
+paper-guard review paper.pdf
+```
+
+### Local web GUI
+
+```bash
+paper-guard --gui
+```
+
+This starts a local web interface on `127.0.0.1` (never on the LAN), prints the
+URL, and opens the default browser. Use it to:
+
+* see the version, provider, and configuration
+* select a `.tex` or `.pdf` paper and start a review
+* watch the five reviewers + Judge complete
+* view findings (severity, confidence, evidence, location)
+* switch presentation style (Neutral / Funny / Insulting) — never triggers an
+  LLM request
+* export the canonical JSON
+
+### Human-readable output styles
+
+```bash
+paper-guard review paper.tex                   # neutral (default)
+paper-guard review paper.tex --style funny
+paper-guard review paper.tex --style insulting
+paper-guard review paper.tex --output summary  # concise terminal summary
+```
+
+### JSON output
+
+The canonical machine-readable artifacts (claims, findings, judge, ledger) are
+always written to the data directory. They are suitable for Bash pipelines,
+CI/CD, downstream LLM processing, and archival:
+
+```bash
+paper-guard review paper.tex
+cat .paper-guard/run-001/ledger.json
+```
+
+### Local LLM configuration (LM Studio / Ollama)
+
+Both LM Studio and Ollama expose an **OpenAI-compatible** endpoint. Configure
+them through the same generic provider:
+
+```toml
+# paper-guard.toml
+[llm]
+provider = "openai-compatible"
+
+[providers.openai-compatible]
+base_url = "http://localhost:1234/v1"   # LM Studio
+# base_url = "http://localhost:11434/v1"  # Ollama
+model = "qwen/qwen3.5-9b"
+structured_output = "json_schema"
+```
 
 ---
 

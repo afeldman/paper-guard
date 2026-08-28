@@ -15,7 +15,7 @@
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse};
-use axum::routing::{get};
+use axum::routing::get;
 use axum::{Json, Router};
 
 use paper_guard_ledger::LedgerStore;
@@ -100,7 +100,10 @@ pub fn gui_router(state: paper_guard_service::AppState) -> Router {
 async fn index() -> impl IntoResponse {
     (
         StatusCode::OK,
-        [(header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"))],
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/html; charset=utf-8"),
+        )],
         Html(INDEX_HTML),
     )
 }
@@ -168,7 +171,11 @@ async fn gui_dashboard(
         base_url,
         is_local_endpoint: is_local,
         structured_output: if provider == "openai-compatible" {
-            cfg.providers.openai_compatible.structured_output.as_str().to_string()
+            cfg.providers
+                .openai_compatible
+                .structured_output
+                .as_str()
+                .to_string()
         } else {
             "mock".to_string()
         },
@@ -228,7 +235,10 @@ async fn gui_report(
 
     Ok((
         StatusCode::OK,
-        [(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; charset=utf-8"))],
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/plain; charset=utf-8"),
+        )],
         report,
     ))
 }
@@ -247,12 +257,10 @@ async fn gui_json(
 
     Ok((
         StatusCode::OK,
-        [
-            (
-                header::CONTENT_TYPE,
-                HeaderValue::from_static("application/json; charset=utf-8"),
-            ),
-        ],
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json; charset=utf-8"),
+        )],
         json,
     ))
 }
@@ -300,7 +308,9 @@ fn api_err(msg: &str) -> (StatusCode, Json<serde_json::Value>) {
 /// (used as the report header's `paper` field). Never crashes on a missing or
 /// corrupt file — the caller falls back to a generic label.
 fn read_paper_source_file(data_dir: &str, run_id: &str) -> Option<String> {
-    let path = std::path::Path::new(data_dir).join(run_id).join("paper.json");
+    let path = std::path::Path::new(data_dir)
+        .join(run_id)
+        .join("paper.json");
     let text = std::fs::read_to_string(path).ok()?;
     let doc: paper_guard_core::Document = serde_json::from_str(&text).ok()?;
     Some(doc.meta.source_file)

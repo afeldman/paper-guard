@@ -12,10 +12,11 @@ archive for your machine, extract it, and run it.
 
 | Platform       | Architecture | Archive suffix                     |
 | -------------- | ------------ | ---------------------------------- |
-| macOS          | ARM64        | `aarch64-apple-darwin.zip`         |
-| Linux          | ARM64        | `aarch64-unknown-linux-gnu.tar.gz` |
-| Linux          | x86_64       | `x86_64-unknown-linux-gnu.tar.gz`  |
-| Windows        | x86_64       | `x86_64-pc-windows-msvc.zip`       |
+| macOS          | ARM64        | `macos-arm64.zip`                  |
+| macOS          | x86_64       | `macos-x86_64.zip`                 |
+| Linux          | ARM64        | `linux-arm64.tar.gz`               |
+| Linux          | x86_64       | `linux-x86_64.tar.gz`              |
+| Windows        | x86_64       | `windows-x86_64.zip`               |
 
 Every archive contains the binary, this `QUICKSTART.md`, and the `LICENSE`.
 Release artifacts are produced by GitHub Actions from the tagged Git commit —
@@ -35,14 +36,14 @@ alongside the archive and verify before extracting.
 - **macOS**
 
   ```bash
-  shasum -a 256 paper-guard-vX.Y.Z-aarch64-apple-darwin.zip
+  shasum -a 256 paper-guard-v1.0.0-macos-arm64.zip
   # compare the output against the SHA256SUMS file
   ```
 
 - **Windows**
 
   ```powershell
-  Get-FileHash .\paper-guard-vX.Y.Z-x86_64-pc-windows-msvc.zip -Algorithm SHA256
+  Get-FileHash .\paper-guard-v1.0.0-windows-x86_64.zip -Algorithm SHA256
   # compare the output against the SHA256SUMS file
   ```
 
@@ -72,6 +73,62 @@ paper-guard feedback <RUN> <FINDING> --decision accept --feedback "Looks correct
 
 That's it. A human stays in control of what is accepted. A normal `review` does
 not modify your manuscript.
+
+## Reviewing different inputs
+
+Paper Guard v1.0 supports three source formats through the same `review`
+command:
+
+```bash
+# Single LaTeX file
+paper-guard review paper.tex
+
+# LaTeX project (\input / \include)
+paper-guard review main.tex
+
+# PDF manuscript
+paper-guard review paper.pdf
+```
+
+For LaTeX projects, `\input`/`\include` references are resolved
+deterministically in document order (nested includes supported). Path
+traversal and symlink escapes are blocked. Missing files and cycles are
+reported — reviewers never silently see an incomplete manuscript. The root of
+a LaTeX review is the directory containing the supplied root `.tex` file.
+
+**Inspect a source before reviewing it:**
+
+```bash
+paper-guard inspect main.tex
+paper-guard inspect paper.pdf
+```
+
+## Local web GUI
+
+Start the local GUI (binds to `127.0.0.1` only):
+
+```bash
+paper-guard --gui
+```
+
+Paper Guard prints the local URL, e.g. `http://127.0.0.1:8080`, and opens
+your default browser. From the GUI you can select a manuscript, start a
+review, watch the five reviewers + Judge complete, view findings, switch
+presentation style (Neutral / Funny / Insulting), and export the canonical
+JSON.
+
+## Human-readable report styles
+
+```bash
+paper-guard review paper.tex                      # neutral (default)
+paper-guard review paper.tex --style funny
+paper-guard review paper.tex --style insulting
+paper-guard review paper.tex --output summary     # concise summary
+```
+
+Styles are purely presentational — they never alter finding IDs, severity,
+confidence, evidence, claims, reviewer identity, Judge decisions, or revision
+scope. The canonical RunRecord remains the single source of truth.
 
 ## Choosing a review provider
 

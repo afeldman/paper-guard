@@ -4,6 +4,67 @@ All notable changes to Paper Guard are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.0] — 2026-08-28
+
+### Added
+
+- **LaTeX project support** (`\input` / `\include`) with deterministic,
+  document-order resolution. Nested includes, extensionless references,
+  Unicode filenames, and paths containing spaces are supported. Cycles
+  (`LATEX_INCLUDE_CYCLE`) and missing files (`LATEX_INCLUDE_NOT_FOUND`) are
+  reported as deterministic diagnostics. Path traversal and symlink escape
+  outside the project root are blocked (fail closed). Source content is cached
+  within a review run and include depth/fragment-count caps prevent
+  exponential include graphs.
+- **PDF manuscripts** as a first-class review source. In-process text
+  extraction via `lopdf` (no OCR, no embedded content execution, no shell)
+  with per-page provenance. Malformed PDFs fail with `PDF_INVALID`; encrypted
+  PDFs with `PDF_ENCRYPTED`; image-only / no-text PDFs with
+  `PDF_TEXT_UNAVAILABLE`. Extraction is bounded per page.
+- **`paper-guard --gui`** — a small local web GUI (presentation/control layer
+  only) that binds to `127.0.0.1` by default, selects an available local port,
+  prints the URL, and optionally opens the default browser. Views: Dashboard
+  (version/provider/config/recent runs), Review (select `.tex`/`.pdf`, start a
+  review, watch the five reviewers + Judge), Results (findings + filters +
+  human-readable report + style switch), and JSON export of the canonical
+  `RunRecord`. The GUI reuses the existing service/API/domain layers exactly;
+  no second review engine and no duplicated domain logic.
+- **`paper-guard inspect`** — report how a source document resolves (LaTeX
+  project includes, PDF page counts, missing/cyclic diagnostics) without
+  running a review. Never modifies the source.
+- **Cross-platform release matrix** now includes **macOS x86_64** in addition
+  to macOS ARM64, Linux ARM64, Linux x86_64, and Windows x86_64. Archives use
+  friendly platform labels:
+  `paper-guard-1.0.0-macos-arm64.zip`, `-macos-x86_64.zip`,
+  `-linux-arm64.tar.gz`, `-linux-x86_64.tar.gz`, `-windows-x86_64.zip`.
+  `SHA256SUMS` is generated and verified before publishing.
+- **GUI+API tests** — startup, localhost binding, API availability, review
+  creation, style switching, JSON export, security boundary checks.
+
+### Security & integrity
+
+- LaTeX parsing never executes LaTeX (`pdflatex`, `xelatex`, `lualatex`,
+  BibTeX, Biber, `\write18`, shell escape, Makefile) — the parser only reads
+  source files as untrusted text.
+- PDF extraction never executes embedded content; figure interpretation is
+  only claimed when the text layer actually contains it.
+- The GUI cannot bypass reviewer validation, Judge validation, evidence
+  isolation, authorization boundaries, revision approval, or ledger rules; all
+  mutations flow through the same domain/API boundaries as the CLI.
+- Presentation styles (`neutral`/`funny`/`insulting`) in the GUI are
+  deterministic, client-selected renderings of the canonical `RunRecord`; a
+  style switch never triggers an LLM request and never alters finding content.
+
+### Changed
+
+- Versioned release artifacts are named by friendly platform labels instead of
+  the Rust target triple (e.g. `paper-guard-1.0.0-linux-x86_64.tar.gz`).
+
+### Configuration Wizard (planned for v1.1)
+
+- Documented the planned `paper-guard --wizard` interactive configuration
+  flow. Not implemented in v1.0.
+
 ## [0.9.0] — 2026-08-28
 
 ### Added

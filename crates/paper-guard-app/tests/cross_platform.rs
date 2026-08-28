@@ -234,6 +234,6 @@ fn diagnostics_contain_no_secrets() {
     for secret in ["sk-", "PAPER_GUARD_TOKEN", ".pfx", "api_key", "BEGIN RSA"] {
         assert!(!d.to_lowercase().contains(&secret.to_lowercase()));
     }
-    assert!(build_info::version().starts_with("0."));
+    assert!(build_info::version().starts_with("1."));
     assert!(["windows", "unix"].contains(&build_info::os_family()));
 }

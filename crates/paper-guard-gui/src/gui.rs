@@ -110,9 +110,9 @@ pub async fn start_gui(opts: &GuiOptions) -> anyhow::Result<GuiStartup> {
     let combined = service_router.merge(gui);
 
     // Bind the listener.
-    let listener = tokio::net::TcpListener::bind(&bind_arg).await.map_err(|e| {
-        anyhow::anyhow!("unable to bind GUI to `{bind_arg}`: {e}")
-    })?;
+    let listener = tokio::net::TcpListener::bind(&bind_arg)
+        .await
+        .map_err(|e| anyhow::anyhow!("unable to bind GUI to `{bind_arg}`: {e}"))?;
     let addr = listener.local_addr()?;
 
     let is_loopback = addr.ip().is_loopback();

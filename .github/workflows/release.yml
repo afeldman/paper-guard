@@ -2,13 +2,14 @@
 #
 # Triggered on an annotated, signed tag like `vX.Y.Z`. Runs an authoritative
 # validation job, then builds native, distributable binaries on the supported
-# cross-platform matrix, packages each into a versioned archive named by its
-# Rust target triple, generates and verifies SHA-256 checksums, runs a Trivy
+# cross-platform matrix, packages each into a versioned archive named by the
+# target platform, generates and verifies SHA-256 checksums, runs a Trivy
 # security gate, and creates a GitHub Release with the artifacts, the source
 # archive, and release notes.
 #
-# Supported release matrix (intentional; macOS Intel is out of scope):
+# Supported release matrix:
 #   macOS ARM64   -> aarch64-apple-darwin          (native Apple Silicon runner)
+#   macOS x86_64  -> x86_64-apple-darwin           (native Intel macOS runner)
 #   Linux ARM64   -> aarch64-unknown-linux-gnu     (cross, reproducible container)
 #   Linux x86_64  -> x86_64-unknown-linux-gnu      (native ubuntu-latest)
 #   Windows x86_64-> x86_64-pc-windows-msvc        (native MSVC; never MinGW)
@@ -66,7 +67,8 @@ jobs:
   # ---------------------------------------------------------------------------
   # Cross-platform native release builds. Each job builds exactly one target,
   # smoke-tests the resulting binary, stages QUICKSTART.md + LICENSE alongside
-  # it, and packages a versioned archive named by the Rust target triple.
+  # it, and packages a versioned archive named by the friendly platform label
+  # (macos-arm64, macos-x86_64, linux-arm64, linux-x86_64, windows-x86_64).
   # ---------------------------------------------------------------------------
   build:
     name: build (${{ matrix.target }})
@@ -82,28 +84,35 @@ jobs:
             bin: paper-guard
             ext: ""
             archive_ext: zip
-            archive_name: aarch64-apple-darwin
+            archive_name: macos-arm64
+          # macOS x86_64 — native Intel macOS runner.
+          - os: macos-13
+            target: x86_64-apple-darwin
+            bin: paper-guard
+            ext: ""
+            archive_ext: zip
+            archive_name: macos-x86_64
           # Linux ARM64 — reproduced via `cross` (pinned, containerised toolchain).
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             bin: paper-guard
             ext: ""
             archive_ext: tar.gz
-            archive_name: aarch64-unknown-linux-gnu
+            archive_name: linux-arm64
           # Linux x86_64 — native.
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             bin: paper-guard
             ext: ""
             archive_ext: tar.gz
-            archive_name: x86_64-unknown-linux-gnu
+            archive_name: linux-x86_64
           # Windows x86_64 — native MSVC.
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             bin: paper-guard
             ext: .exe
             archive_ext: zip
-            archive_name: x86_64-pc-windows-msvc
+            archive_name: windows-x86_64
 
     steps:
       - uses: actions/checkout@v4
@@ -356,16 +365,17 @@ jobs:
 
           | Platform | Archive |
           | --- | --- |
-          | macOS ARM64 | paper-guard-${v}-aarch64-apple-darwin.zip |
-          | Linux ARM64 | paper-guard-${v}-aarch64-unknown-linux-gnu.tar.gz |
-          | Linux x86_64 | paper-guard-${v}-x86_64-unknown-linux-gnu.tar.gz |
-          | Windows x86_64 | paper-guard-${v}-x86_64-pc-windows-msvc.zip |
+          | macOS ARM64 | paper-guard-${v}-macos-arm64.zip |
+          | macOS x86_64 | paper-guard-${v}-macos-x86_64.zip |
+          | Linux ARM64 | paper-guard-${v}-linux-arm64.tar.gz |
+          | Linux x86_64 | paper-guard-${v}-linux-x86_64.tar.gz |
+          | Windows x86_64 | paper-guard-${v}-windows-x86_64.zip |
 
           Each archive contains the binary, QUICKSTART.md, and LICENSE.
 
           ## Windows quickstart
 
-          - download and extract paper-guard-${v}-x86_64-pc-windows-msvc.zip
+          - download and extract paper-guard-${v}-windows-x86_64.zip
           - run: .\\paper-guard.exe --help
           - configure a local OpenAI-compatible provider (e.g. Ollama), then:
             .\\paper-guard.exe review paper.tex
@@ -380,10 +390,11 @@ jobs:
 
           ## Artifacts
 
-          - paper-guard-${v}-aarch64-apple-darwin.zip
-          - paper-guard-${v}-aarch64-unknown-linux-gnu.tar.gz
-          - paper-guard-${v}-x86_64-unknown-linux-gnu.tar.gz
-          - paper-guard-${v}-x86_64-pc-windows-msvc.zip
+          - paper-guard-${v}-macos-arm64.zip
+          - paper-guard-${v}-macos-x86_64.zip
+          - paper-guard-${v}-linux-arm64.tar.gz
+          - paper-guard-${v}-linux-x86_64.tar.gz
+          - paper-guard-${v}-windows-x86_64.zip
           - paper-guard-${v}.tar.gz (source archive)
           - SHA256SUMS (checksums for every artifact)
           EOF

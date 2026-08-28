@@ -451,12 +451,13 @@ pub fn parse_latex_project(project: &ResolvedLatexProject) -> anyhow::Result<Doc
     let mut current_section: Option<paper_guard_core::Section> = None;
     // De-duplicate bibliography references by key across fragments.
     let mut seen_refs: HashSet<String> = HashSet::new();
+    // Compile the abstract regex once (used for every fragment).
+    let abstract_re =
+        Regex::new(r"(?s)\\begin\{abstract\}.*?\\end\{abstract\}").expect("abstract regex valid");
 
     for fragment in &project.fragments {
         // Split out bibliography for this fragment.
         let (body, bibliography) = split_bibliography(&fragment.text);
-        let abstract_re = Regex::new(r"(?s)\\begin\{abstract\}.*?\\end\{abstract\}")
-            .expect("abstract regex valid");
         let body_clean = abstract_re.replace_all(&body, "\n").into_owned();
 
         let mut loc = Some(fragment.base_location());

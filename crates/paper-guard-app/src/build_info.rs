@@ -83,7 +83,7 @@ mod tests {
     #[test]
     fn version_is_populated() {
         assert!(!version().is_empty());
-        assert!(version().starts_with("0."));
+        assert!(version().starts_with("1."));
     }
 
     #[test]

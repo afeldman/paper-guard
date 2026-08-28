@@ -756,26 +756,23 @@ async fn run_inspect(cfg: &AppConfig, source: &str) -> anyhow::Result<()> {
     use paper_guard_parser::{format_from_extension, SourceFormat};
 
     let format = format_from_extension(source);
-    println!("Source: {}", match format {
-        SourceFormat::Latex => "LaTeX".to_string(),
-        SourceFormat::Pdf => "PDF".to_string(),
-        SourceFormat::Typst => "Typst".to_string(),
-        SourceFormat::Docx => "DOCX".to_string(),
-        SourceFormat::SourceDir => "Source directory".to_string(),
-    });
+    println!(
+        "Source: {}",
+        match format {
+            SourceFormat::Latex => "LaTeX".to_string(),
+            SourceFormat::Pdf => "PDF".to_string(),
+            SourceFormat::Typst => "Typst".to_string(),
+            SourceFormat::Docx => "DOCX".to_string(),
+            SourceFormat::SourceDir => "Source directory".to_string(),
+        }
+    );
 
     match format {
         SourceFormat::Pdf => {
             let bytes = std::fs::read(source)?;
             let doc = paper_guard_parser::parse_source_path(source).await?;
             // Count pages via the parsed document sections.
-            let pages = doc
-                .parsed
-                .document
-                .sections
-                .iter()
-                .map(|s| s.title.clone())
-                .count();
+            let pages = doc.parsed.document.sections.len();
             let has_text = !doc.parsed.document.sections.is_empty();
             println!("Pages: {pages}");
             println!(

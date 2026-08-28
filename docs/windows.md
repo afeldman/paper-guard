@@ -13,7 +13,7 @@ Kubernetes, or a development environment.
 1. Download the latest release archive for Windows x86_64:
 
    ```
-   paper-guard-vX.Y.Z-x86_64-pc-windows-msvc.zip
+   paper-guard-1.0.0-windows-x86_64.zip
    ```
 
 2. Extract it anywhere (e.g. `C:\Users\<You>\PaperGuard\`).
@@ -195,7 +195,38 @@ ledger entry for a remote review.
 
 ---
 
-## 7. Retrieve findings and provide feedback
+## 7. Local web GUI
+
+Paper Guard v1.0 includes a small local web GUI. Start it with:
+
+```powershell
+.\paper-guard.exe --gui
+```
+
+Paper Guard binds the GUI to `127.0.0.1` by default (never the LAN), prints
+the local URL (e.g. `http://127.0.0.1:8080`), and opens your default browser.
+
+From the GUI you can:
+
+- see the Paper Guard version, configured LLM provider, and current config
+- select a `.tex` or `.pdf` paper and start a review
+- watch the five reviewers (Scientific, Adversarial, Evidence, References,
+  Figures) and the Judge complete
+- view findings (severity, confidence, evidence, affected claim, source
+  location)
+- filter by reviewer, severity, finding category, or status
+- switch the presentation style (Neutral / Funny / Insulting) — this is purely
+  presentational and never triggers another LLM request
+- export the canonical JSON `RunRecord`
+
+No API keys are stored in the browser, no paper content is uploaded to any
+third-party service, and the GUI cannot modify findings or bypass integrity
+rules. Any mutation you perform goes through the same domain/API layer as the
+CLI.
+
+---
+
+## 8. Retrieve findings and provide feedback
 
 After a review, list the findings:
 

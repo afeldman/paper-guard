@@ -13,9 +13,11 @@
 //!                    (reviewers, judge, ledger)
 //! ```
 
+pub mod build_info;
 pub mod config;
 pub mod logging;
 pub mod memory;
+pub mod paths;
 pub mod pipeline;
 
 pub use config::{AppConfig, DiscoverySectionConfig, MemoryMode, ServerConfig};

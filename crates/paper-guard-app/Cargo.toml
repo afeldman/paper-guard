@@ -18,6 +18,7 @@ rust-loguru.workspace = true
 reqwest.workspace = true
 futures.workspace = true
 async-trait.workspace = true
+dirs.workspace = true
 parking_lot = "0.12"
 paper-guard-core.workspace = true
 paper-guard-llm.workspace = true

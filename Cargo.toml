@@ -48,7 +48,7 @@ reqwest = { version = "0.13", features = ["json", "rustls", "rustls-native-certs
 wiremock = "0.6"
 axum = "0.7"
 tower = "0.5"
-base64 = "0.22"
+base64 = "0.23"
 dirs = "5"
 
 # --- Internal crates ---

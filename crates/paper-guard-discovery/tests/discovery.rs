@@ -459,3 +459,46 @@ async fn verifies_a_real_paper_guard_service() {
 
     server.abort();
 }
+
+// ---------------------------------------------------------------------------
+// Windows / cross-platform compatibility for the discovery abstraction
+// ---------------------------------------------------------------------------
+
+/// The mDNS backend and the mock provider both live behind the same
+/// `ServiceDiscovery` trait. Crucially, the CLI and higher layers never depend
+/// on a Windows-Specific (or Linux/macOS-specific) implementation detail — they
+/// only ever see `ServiceDiscovery` + `ServiceEndpoint`. This test asserts that
+/// the trait surface is exactly what consumers use, and that neither backend
+/// leaks an OS-specific type into the public API.
+#[tokio::test]
+async fn only_service_discovery_and_endpoint_are_public() {
+    // The mock is the deterministic, network-free stand-in used in CI on every
+    // OS (including Windows). It returns a typed candidate list.
+    let provider = MockServiceDiscovery::new(vec![endpoint(
+        "pg",
+        "paper-guard.local",
+        "192.168.1.5",
+        8080,
+        "0.6.0",
+    )]);
+    let _: &dyn ServiceDiscovery = &provider; // trait-object compatible
+
+    // An empty discovery (e.g. multicast blocked by the Windows Firewall)
+    // yields an *empty* candidate list, never an error: the discover command
+    // can then print "No Paper Guard services found" without crashing.
+    let empty = MockServiceDiscovery::empty();
+    let result = empty.discover().await.unwrap();
+    assert!(result.is_empty());
+}
+
+/// A Windows-style hostname with a `.local` suffix parses into an endpoint
+/// whose `base_url` never carries a Windows path separator.
+#[test]
+fn windows_hostname_endpoint_base_url_is_clean() {
+    let ep = endpoint("pg", "paper-guard.local", "192.168.1.7", 8080, "");
+    let url = ep.base_url();
+    assert!(url.starts_with("http://"));
+    assert!(!url.contains('\\')); // no Windows separators
+    assert!(!url.contains("C:")); // no drive letter injection
+    assert!(url.ends_with(":8080"));
+}

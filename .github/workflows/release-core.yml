@@ -224,9 +224,11 @@ jobs:
       # the expected version + commit, and that --help works with no dependency
       # on the repository checkout (we cd to /tmp first for the runnable tests).
       # -----------------------------------------------------------------------
-      - name: Smoke test — exists + version + help (POSIX)
+      - name: Smoke test — exists + version + help (POSIX, native)
         shell: bash
-        if: runner.os != 'Windows'
+        # cross emits an aarch64 Linux binary that cannot be executed on the
+        # x86_64 runner; that target gets the architectural identity check below.
+        if: runner.os != 'Windows' && matrix.target != 'aarch64-unknown-linux-gnu'
         run: |
           set -euo pipefail
           BIN="target/${{ matrix.target }}/release/${{ matrix.bin }}${{ matrix.ext }}"
@@ -250,6 +252,22 @@ jobs:
           ./pg-smoke info >/dev/null
           ./pg-smoke diagnostics --paths >/dev/null
           echo "smoke ok: $(./pg-smoke info)"
+
+      # cross-built aarch64 Linux binary cannot be executed on the x86_64
+      # runner, so verify its architecture + embedded commit provenance with
+      # `file`/`strings` instead of an execution smoke test.
+      - name: Smoke test — architecture identity (cross-host ARM64 Linux)
+        shell: bash
+        if: runner.os != 'Windows' && matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          set -euo pipefail
+          BIN="target/${{ matrix.target }}/release/${{ matrix.bin }}${{ matrix.ext }}"
+          test -r "$BIN"
+          test -s "$BIN"
+          file "$BIN"
+          file "$BIN" | grep -q 'ELF 64-bit.*aarch64' || { echo "unexpected architecture in $BIN"; file "$BIN"; exit 1; }
+          strings "$BIN" | grep -q "commit=${{ needs.resolve.outputs.commit }}" || { echo "commit metadata missing in $BIN"; exit 1; }
+          echo "confirmed: aarch64-unknown-linux-gnu binary for commit ${{ needs.resolve.outputs.commit }}, static identity OK"
 
       - name: Smoke test — exists + version + help (Windows)
         shell: powershell
@@ -276,9 +294,12 @@ jobs:
           cp LICENSE "$PKGDIR/LICENSE"
           ls -la "$PKGDIR"
 
-      # Create the versioned ZIP named by the Rust target triple.
-      - name: Package ZIP (${{ matrix.target }})
+      # Create the versioned ZIP named by the Rust target triple. `zip` is not
+      # available on GitHub's Windows runners, so Windows uses PowerShell's
+      # Compress-Archive; POSIX shells use the classic `zip`.
+      - name: Package ZIP (${{ matrix.target }}, POSIX)
         shell: bash
+        if: runner.os != 'Windows'
         env:
           VERSION: ${{ needs.resolve.outputs.version }}
         run: |
@@ -287,6 +308,17 @@ jobs:
           ( cd package && zip -qr "../${name}" . )
           ls -la "${name}"
           echo "artifact=${name}" >> "$GITHUB_OUTPUT"
+      - name: Package ZIP (${{ matrix.target }}, Windows)
+        shell: powershell
+        if: runner.os == 'Windows'
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $name = "paper-guard-v$env:VERSION-${{ matrix.target }}.zip"
+          Compress-Archive -Path "package\*" -DestinationPath $name -Force
+          Get-Item $name | Select-Object Name,Length
+          "artifact=$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

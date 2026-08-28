@@ -315,7 +315,9 @@ jobs:
             Write-Host "smoke ok (basic: info not present in this tag)"
           }
 
-      # Assemble a clean package directory: exactly binary + QUICKSTART + LICENSE.
+      # Assemble a clean package directory. LICENSE ships in every tag;
+      # QUICKSTART.md was only added from v0.7.0 on, so older historical tags
+      # ship README.md (which is present in every tag) as the fallback guide.
       - name: Assemble package directory
         shell: bash
         run: |
@@ -323,8 +325,12 @@ jobs:
           PKGDIR="package"
           mkdir -p "$PKGDIR"
           cp "target/${{ matrix.target }}/release/${{ matrix.bin }}${{ matrix.ext }}" "$PKGDIR/"
-          cp QUICKSTART.md "$PKGDIR/QUICKSTART.md"
           cp LICENSE "$PKGDIR/LICENSE"
+          if [ -f QUICKSTART.md ]; then
+            cp QUICKSTART.md "$PKGDIR/QUICKSTART.md"
+          else
+            cp README.md "$PKGDIR/README.md"
+          fi
           ls -la "$PKGDIR"
 
       # Create the versioned ZIP named by the Rust target triple. `zip` is not

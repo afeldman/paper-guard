@@ -8,8 +8,14 @@
 //! clear unimplemented error rather than producing a wrong model.
 
 mod latex;
+pub mod latex_project;
+pub mod pdf;
 
 pub use latex::{parse_latex, LatexParser};
+pub use latex_project::{
+    parse_latex_project, resolve_latex_project, LatexFragment, ResolvedLatexProject,
+};
+pub use pdf::{parse_pdf, PdfParser};
 
 use paper_guard_core::{ContentHash, Document};
 
@@ -134,9 +140,7 @@ pub trait Parser: Send + Sync {
 pub fn parser_for_format(format: SourceFormat) -> anyhow::Result<Box<dyn Parser>> {
     match format {
         SourceFormat::Latex => Ok(Box::new(LatexParser)),
-        SourceFormat::Pdf => Err(anyhow::anyhow!(
-            "PDF parsing is not yet implemented in this version."
-        )),
+        SourceFormat::Pdf => Ok(Box::new(PdfParser)),
         SourceFormat::Typst => Err(anyhow::anyhow!(
             "Typst parsing is not yet implemented in this version."
         )),
@@ -165,6 +169,141 @@ pub fn format_from_extension(path: &str) -> SourceFormat {
     }
 }
 
+// ---------------------------------------------------------------------------
+// DocumentSource — provider-independent, path-aware parsing
+// ---------------------------------------------------------------------------
+
+/// A parsed source plus enough provenance to explain *where* content came from.
+///
+/// This is the single entry point the pipeline uses so that LaTeX projects,
+/// single `.tex` files, and PDFs all converge on the same canonical model.
+#[derive(Debug, Clone)]
+pub struct DocumentSource {
+    pub parsed: ParsedSource,
+    /// For a LaTeX project, the list of resolved files (relative to the root).
+    pub project_files: Vec<String>,
+    /// Missing includes (non-fatal structural diagnostics).
+    pub missing_includes: Vec<String>,
+    /// Include cycles detected (non-fatal structural diagnostics).
+    pub include_cycles: Vec<String>,
+}
+
+impl DocumentSource {
+    /// The resolved source format.
+    pub fn format(&self) -> SourceFormat {
+        self.parsed.format
+    }
+
+    /// Number of distinct source files backing this document.
+    pub fn file_count(&self) -> usize {
+        if self.project_files.is_empty() {
+            1
+        } else {
+            self.project_files.len()
+        }
+    }
+
+    /// Whether this is a resolved multi-file LaTeX project.
+    pub fn is_project(&self) -> bool {
+        !self.project_files.is_empty()
+    }
+}
+
+/// Parse a file *path* into a [`DocumentSource`], auto-detecting whether a
+/// `.tex` file is a single manuscript or the root of a `\input`/`\include`
+/// project, and dispatching PDFs to the PDF parser.
+///
+/// * A `.pdf` always uses the PDF parser.
+/// * A `.tex` without any resolvable `\input`/`\include` is parsed as a single
+///   file. If it *does* contain includes, it is parsed as a project.
+/// * Structural diagnostics (missing includes, cycles) are surfaced on the
+///   returned [`DocumentSource`] rather than failing the whole parse, so a
+///   researcher still gets a review of the readable content.
+pub async fn parse_source_path(source_path: &str) -> anyhow::Result<DocumentSource> {
+    let format = format_from_extension(source_path);
+    match format {
+        SourceFormat::Pdf => {
+            let bytes = std::fs::read(source_path)?;
+            let parsed = PdfParser.parse(source_path, &bytes).await?;
+            Ok(DocumentSource {
+                parsed,
+                project_files: Vec::new(),
+                missing_includes: Vec::new(),
+                include_cycles: Vec::new(),
+            })
+        }
+        SourceFormat::Latex => parse_latex_source_path(source_path).await,
+        other => Err(anyhow::anyhow!(
+            "unsupported source `{source_path}`: {other} is not yet supported in v1.0"
+        )),
+    }
+}
+
+/// Parse a `.tex` path, favouring project resolution when includes are present.
+async fn parse_latex_source_path(source_path: &str) -> anyhow::Result<DocumentSource> {
+    use std::path::Path;
+    let path = Path::new(source_path);
+    if !path.is_file() {
+        return Err(anyhow::anyhow!(
+            "source file `{source_path}` does not exist or is not readable"
+        ));
+    }
+    // Peek: does the root file reference any include?
+    let raw = std::fs::read(path)?;
+    let root_text = String::from_utf8_lossy(&raw).into_owned();
+    let has_include_marker = root_text.contains("\\input") || root_text.contains("\\include");
+
+    if !has_include_marker {
+        // Single-file manuscript.
+        let parsed = LatexParser.parse(source_path, &raw).await?;
+        return Ok(DocumentSource {
+            parsed,
+            project_files: Vec::new(),
+            missing_includes: Vec::new(),
+            include_cycles: Vec::new(),
+        });
+    }
+
+    // Attempt project resolution.
+    let project = crate::latex_project::resolve_latex_project(path).map_err(|e| {
+        // Fall back to single-file if the root itself can't be a project.
+        anyhow::anyhow!("unable to resolve LaTeX project at `{source_path}`: {e}")
+    })?;
+
+    let project_files = project
+        .fragments
+        .iter()
+        .map(|f| f.rel_path.clone())
+        .collect::<Vec<_>>();
+    let missing = project.missing_includes.clone();
+    let cycles = project.cycles.clone();
+
+    // If nothing beyond the root resolved, treat it as a single file.
+    if project.fragments.len() <= 1 {
+        let parsed = LatexParser.parse(source_path, &raw).await?;
+        return Ok(DocumentSource {
+            parsed,
+            project_files: Vec::new(),
+            missing_includes: missing,
+            include_cycles: cycles,
+        });
+    }
+
+    let document = crate::latex_project::parse_latex_project(&project)?;
+    let raw_bytes = raw;
+    let parsed = ParsedSource::with_document(
+        SourceFormat::Latex,
+        source_path.to_string(),
+        raw_bytes.clone(),
+        document,
+    );
+    Ok(DocumentSource {
+        parsed,
+        project_files,
+        missing_includes: missing,
+        include_cycles: cycles,
+    })
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,10 +317,15 @@ mod tests {
     }
 
     #[test]
+    fn parser_for_pdf_returns_pdf_parser() {
+        assert!(parser_for_format(SourceFormat::Pdf).is_ok());
+    }
+
+    #[test]
     fn parser_for_unsupported_returns_clear_error() {
-        match parser_for_format(SourceFormat::Pdf) {
+        match parser_for_format(SourceFormat::Typst) {
             Err(e) => assert!(e.to_string().contains("not yet implemented")),
-            Ok(_) => panic!("expected an error for PDF"),
+            Ok(_) => panic!("expected an error for Typst"),
         }
     }
 }

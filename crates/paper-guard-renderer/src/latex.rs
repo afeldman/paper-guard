@@ -85,7 +85,9 @@ mod tests {
                 paragraphs: vec![Paragraph {
                     id: ParagraphId("s1.p1".into()),
                     text: "The cat sat on the mat.".into(),
+                    location: None,
                 }],
+                location: None,
             })
             .build();
         let r = LatexRenderer.render(&doc);

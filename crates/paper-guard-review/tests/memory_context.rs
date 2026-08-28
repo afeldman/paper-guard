@@ -20,7 +20,9 @@ fn tiny_ctx(memory: &str) -> ReviewerContext {
                 paragraphs: vec![paper_guard_core::Paragraph {
                     id: paper_guard_core::ParagraphId("section_1.paragraph_1".into()),
                     text: "the method reduces latency. INSUFFICIENT_EVIDENCE".into(),
+                    location: None,
                 }],
+                location: None,
             })
             .build(),
         prompt_version: "v1".into(),

@@ -52,7 +52,9 @@ mod tests {
                 paragraphs: vec![Paragraph {
                     id: ParagraphId("section_1.paragraph_1".into()),
                     text: "We show the method reduces latency. INSUFFICIENT_EVIDENCE".into(),
+                    location: None,
                 }],
+                location: None,
             }],
             bibliography: vec![],
             citations: vec![],

@@ -11,7 +11,7 @@ use paper_guard_core::{ContentHash, Document, RevisionInstruction, SCHEMA_VERSIO
 use paper_guard_ledger::{
     AgentOutcome, FindingRecord, JudgedRecord, LedgerStore, RunRecord, RunStatus, ValidationRecord,
 };
-use paper_guard_parser::{format_from_extension, parser_for_format, SourceFormat};
+use paper_guard_parser::{parse_source_path, parser_for_format, SourceFormat};
 use paper_guard_review::{
     collect_findings, AgentStatus, Judge, ReviewRunner, Reviewer, ReviewerContext, ReviewerKind,
     ReviewerSettings,
@@ -139,13 +139,20 @@ pub async fn run_pipeline(
     let ledger = LedgerStore::open(data_dir)?;
     let run_id = next_run_id(&ledger)?;
 
-    let bytes = read_source(source_path)?;
-    let input_hash = ContentHash::of_bytes(&bytes);
-    let format = resolve_format(source_path, config);
+    // Parse the source path (single .tex, \input/\include project, or .pdf)
+    // into the canonical model via `parse_source_path`.
+    let source = parse_source_path(source_path).await?;
+    let input_hash = ContentHash::of_bytes(&source.parsed.raw_bytes);
+    let format = source.format();
+    let document = source.parsed.document;
 
-    let parser = parser_for_format(format)?;
-    let parsed = parser.parse(source_path, &bytes).await?;
-    let document = parsed.document;
+    // Surface missing/cyclic include diagnostics without failing the review.
+    if !source.missing_includes.is_empty() {
+        logging::log_project_missing_includes(&run_id, &source.missing_includes);
+    }
+    if !source.include_cycles.is_empty() {
+        logging::log_project_cycles(&run_id, &source.include_cycles);
+    }
 
     let config_hash = ContentHash::compute(&config.canonical_json());
     let model_configuration = serde_json::to_string(&config.reviewers)?;

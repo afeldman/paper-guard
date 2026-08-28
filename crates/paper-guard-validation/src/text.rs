@@ -215,12 +215,14 @@ mod tests {
             .map(|(i, t)| Paragraph {
                 id: ParagraphId(format!("s1.p{}", i + 1)),
                 text: t.to_string(),
+                location: None,
             })
             .collect();
         b = b.section(Section {
             id: SectionId("section_1".into()),
             title: "Intro".into(),
             paragraphs: paras,
+            location: None,
         });
         b.build()
     }

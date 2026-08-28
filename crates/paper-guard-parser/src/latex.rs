@@ -7,7 +7,7 @@
 
 use paper_guard_core::{
     CanonicalDocumentBuilder, Citation, Claim, ClaimId, ClaimType, Document, Equation, Figure,
-    Paragraph, ParagraphId, Reference, ReferenceId, Section, SectionId, Table,
+    Paragraph, ParagraphId, Reference, ReferenceId, Section, SectionId, SourceLocation, Table,
 };
 
 use crate::{ParsedSource, Parser, SourceFormat};
@@ -56,7 +56,22 @@ pub fn parse_latex(source_file: &str, text: &str) -> anyhow::Result<Document> {
     let body_clean = abstract_re.replace_all(&body, "\n").into_owned();
 
     // Process the body line-by-line into a section/paragraph layout.
-    let (sections, citations, claims) = build_sections(&body_clean);
+    let mut loc: Option<SourceLocation> = None;
+    let mut counter = 0usize;
+    let mut current: Option<Section> = None;
+    let mut sections: Vec<Section> = Vec::new();
+    let mut citations: Vec<Citation> = Vec::new();
+    let mut claims: Vec<Claim> = Vec::new();
+    build_sections(
+        &body_clean,
+        &mut loc,
+        &mut counter,
+        &mut current,
+        &mut sections,
+        &mut citations,
+        &mut claims,
+    );
+    finalize_sections(&mut current, &mut sections);
 
     for sec in sections {
         builder = builder.section(sec);
@@ -88,17 +103,34 @@ pub fn parse_latex(source_file: &str, text: &str) -> anyhow::Result<Document> {
     Ok(doc)
 }
 
-/// Build sections from the body text, extracting citations and heuristic
-/// claims along the way.
+/// Build sections from a body text fragment, extracting citations and
+/// heuristic claims along the way.
 ///
-/// Returns `(sections, citations, claims)`.
-fn build_sections(body: &str) -> (Vec<Section>, Vec<Citation>, Vec<Claim>) {
-    let mut sections: Vec<Section> = Vec::new();
-    let mut citations: Vec<Citation> = Vec::new();
-    let mut claims: Vec<Claim> = Vec::new();
-    let mut current: Option<Section> = None;
-    let mut section_counter = 0usize;
-    let mut pending: Vec<String> = Vec::new();
+/// This is *stateful* so a multi-file project can be parsed as one logical
+/// document: `counter`, `current` (the section currently being accumulated),
+/// `sections`, `citations` and `claims` are shared across all fragments of a
+/// project. A `\section` opened in one fragment continues in the next, and
+/// section/paragraph IDs stay globally unique.
+///
+/// `loc` is the fragment's base [`SourceLocation`] (its `file`,
+/// `include_parent`, `include_depth` and `source_type`); this function fills in
+/// `start_line`/`end_line` for each paragraph and section heading it builds.
+/// For a single-file document pass a fresh `counter`, `None` `current`, and
+/// empty vectors; for a project share them across fragments.
+pub(crate) fn build_sections(
+    body: &str,
+    loc: &mut Option<SourceLocation>,
+    counter: &mut usize,
+    current: &mut Option<Section>,
+    sections: &mut Vec<Section>,
+    citations: &mut Vec<Citation>,
+    claims: &mut Vec<Claim>,
+) {
+    let section_counter = counter;
+    let mut pending: Vec<(usize, String)> = Vec::new(); // (1-based line no, raw line)
+
+    // Line-number of the current line being processed (1-based within body).
+    let mut cur_line = 0usize;
 
     // Helper to flush the pending paragraph into the current section; returns
     // any citations found.
@@ -107,7 +139,9 @@ fn build_sections(body: &str) -> (Vec<Section>, Vec<Citation>, Vec<Claim>) {
             if pending.is_empty() {
                 Vec::new()
             } else {
-                let raw = pending.drain(..).collect::<Vec<_>>().join("\n");
+                let start_line = pending[0].0;
+                let end_line = pending.last().map(|p| p.0).unwrap_or(start_line);
+                let raw = pending.drain(..).map(|(_, l)| l).collect::<Vec<_>>().join("\n");
                 let cleaned = clean_tex(&raw);
                 if cleaned.is_empty() {
                     Vec::new()
@@ -123,7 +157,13 @@ fn build_sections(body: &str) -> (Vec<Section>, Vec<Citation>, Vec<Claim>) {
                     // Heuristic claims from the cleaned text.
                     let page_claims = extract_claims(para_id.clone(), &cleaned);
                     claims.extend(page_claims);
-                    push_paragraph(&mut current, para_id, cleaned);
+                    // Attach provenance for this paragraph.
+                    let para_loc = loc.as_ref().map(|base_loc| SourceLocation {
+                        start_line: Some(start_line as u32),
+                        end_line: Some(end_line as u32),
+                        ..base_loc.clone()
+                    });
+                    push_paragraph(current, para_id, cleaned, para_loc);
                     cit
                 }
             }
@@ -131,6 +171,7 @@ fn build_sections(body: &str) -> (Vec<Section>, Vec<Citation>, Vec<Claim>) {
     }
 
     for raw_line in body.lines() {
+        cur_line += 1;
         let line = raw_line.trim();
         if line.is_empty() {
             let cit = flush!();
@@ -143,53 +184,77 @@ fn build_sections(body: &str) -> (Vec<Section>, Vec<Citation>, Vec<Claim>) {
             if let Some(prev) = current.take() {
                 sections.push(prev);
             }
-            section_counter += 1;
+            *section_counter += 1;
             let id = SectionId(format!("section_{}", section_counter));
-            current = Some(Section {
+            let sec_loc = loc.as_ref().map(|base_loc| SourceLocation {
+                start_line: Some(cur_line as u32),
+                end_line: Some(cur_line as u32),
+                ..base_loc.clone()
+            });
+            *current = Some(Section {
                 id,
                 title: cap.to_string(),
                 paragraphs: Vec::new(),
+                location: sec_loc,
             });
             continue;
         }
         if is_structural_command(line) {
             continue;
         }
-        pending.push(raw_line.to_string());
+        pending.push((cur_line, raw_line.to_string()));
     }
     let cit = flush!();
     citations.extend(cit);
+}
+
+/// Finalize: flush the last open section into the output (call once after all
+/// fragments have been processed).
+pub(crate) fn finalize_sections(
+    current: &mut Option<Section>,
+    sections: &mut Vec<Section>,
+) {
     if let Some(last) = current.take() {
         sections.push(last);
     }
-    (sections, citations, claims)
 }
 
 /// Push a cleaned paragraph into the current section (creating front matter if
 /// needed).
-fn push_paragraph(current: &mut Option<Section>, para_id: ParagraphId, text: String) {
+fn push_paragraph(
+    current: &mut Option<Section>,
+    para_id: ParagraphId,
+    text: String,
+    location: Option<SourceLocation>,
+) {
+    let para = Paragraph {
+        id: para_id,
+        text,
+        location,
+    };
     if let Some(sec) = current.as_mut() {
-        sec.paragraphs.push(Paragraph { id: para_id, text });
+        sec.paragraphs.push(para);
     } else {
         let mut sec = Section {
             id: SectionId("front".into()),
             title: "Front matter".into(),
             paragraphs: Vec::new(),
+            location: None,
         };
-        sec.paragraphs.push(Paragraph { id: para_id, text });
+        sec.paragraphs.push(para);
         *current = Some(sec);
     }
 }
 
 /// Whether a text line is a pure structural LaTeX command with no prose worth
 /// keeping (does not strip citations, which carry content).
-fn is_structural_command(line: &str) -> bool {
+pub(crate) fn is_structural_command(line: &str) -> bool {
     let t = line.trim_start();
     t.starts_with('\\') && !t.starts_with("\\cite") && !t.starts_with("\\label")
 }
 
 /// Remove the bibliography environment from the body and return (body, biblio).
-fn split_bibliography(text: &str) -> (String, String) {
+pub(crate) fn split_bibliography(text: &str) -> (String, String) {
     if let Some(start) = text.find("\\begin{thebibliography}") {
         if let Some(end_rel) = text[start..].find("\\end{thebibliography}") {
             let end = start + end_rel + "\\end{thebibliography}".len();
@@ -209,7 +274,7 @@ fn split_bibliography(text: &str) -> (String, String) {
 /// bibliography entry across parse → render → re-parse. (Previously the key was
 /// discarded and entries were renumbered `R1, R2, ...`, which broke the
 /// citation → reference link and caused false "dangling citation" errors.)
-fn parse_references(biblio: &str) -> Vec<Reference> {
+pub(crate) fn parse_references(biblio: &str) -> Vec<Reference> {
     let mut out = Vec::new();
     let mut count = 0usize;
     // The first split segment is the bibliography environment preamble (e.g.
@@ -374,7 +439,7 @@ fn extract_claims(location: ParagraphId, paragraph: &str) -> Vec<Claim> {
 }
 
 /// Extract figures minimally.
-fn extract_figures(body: &str) -> Vec<Figure> {
+pub(crate) fn extract_figures(body: &str) -> Vec<Figure> {
     let mut out = Vec::new();
     let mut idx = 0usize;
     for block in body.split("\\begin{figure}") {
@@ -395,7 +460,7 @@ fn extract_figures(body: &str) -> Vec<Figure> {
 }
 
 /// Extract tables minimally.
-fn extract_tables(body: &str) -> Vec<Table> {
+pub(crate) fn extract_tables(body: &str) -> Vec<Table> {
     let mut out = Vec::new();
     let mut idx = 0usize;
     for block in body.split("\\begin{table}") {
@@ -415,7 +480,7 @@ fn extract_tables(body: &str) -> Vec<Table> {
 }
 
 /// Extract equations minimally.
-fn extract_equations(body: &str) -> Vec<Equation> {
+pub(crate) fn extract_equations(body: &str) -> Vec<Equation> {
     let mut out = Vec::new();
     let mut idx = 0usize;
     for block in body.split("\\begin{equation}") {
@@ -433,7 +498,7 @@ fn extract_equations(body: &str) -> Vec<Equation> {
 }
 
 /// Simple LaTeX cleanup: strip braces, backslash commands, and math.
-fn clean_tex(input: &str) -> String {
+pub(crate) fn clean_tex(input: &str) -> String {
     // Remove comments.
     let no_comments = input
         .lines()
@@ -465,13 +530,13 @@ fn clean_tex(input: &str) -> String {
         .join(" ")
 }
 
-fn regex_capture<'a>(text: &'a str, pattern: &str) -> Option<&'a str> {
+pub(crate) fn regex_capture<'a>(text: &'a str, pattern: &str) -> Option<&'a str> {
     let re = regex::Regex::new(pattern).ok()?;
     re.captures(text)
         .map(|c| c.get(1).map(|m| m.as_str()).unwrap_or_default())
 }
 
-fn capture_first(text: &str, pattern: &str) -> Option<String> {
+pub(crate) fn capture_first(text: &str, pattern: &str) -> Option<String> {
     let re = regex::Regex::new(pattern).ok()?;
     re.captures(text)
         .and_then(|c| c.get(1))

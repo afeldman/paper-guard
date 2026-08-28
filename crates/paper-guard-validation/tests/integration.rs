@@ -15,7 +15,9 @@ fn rerender_then_validate_preserves_content() {
             paragraphs: vec![paper_guard_core::Paragraph {
                 id: paper_guard_core::ParagraphId("section_1.paragraph_1".into()),
                 text: "We show the method reduces latency by 40%.".into(),
+                location: None,
             }],
+            location: None,
         })
         .build();
 

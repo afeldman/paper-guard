@@ -20,6 +20,63 @@ use serde::{Deserialize, Serialize};
 
 use crate::ContentHash;
 
+/// Source-level provenance for a block of extracted content.
+///
+/// This is deliberately distinct from [`crate::Provenance`] (which records
+/// whether content is author-authored or system-produced). This type records
+/// *where* content physically came from — the source file (for a LaTeX project
+/// or a single manuscript) and the offset within it — so that a finding can be
+/// traced back to its origin in the manuscript.
+///
+/// The fields are all optional / defaulted so that legacy JSON artifacts that
+/// lack provenance still deserialize cleanly.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SourceLocation {
+    /// The source format that produced this content: `latex`, `pdf`, `docx`,
+    /// etc.
+    pub source_type: String,
+    /// The resolved source file path (relative to the project root for a LaTeX
+    /// project, otherwise the supplied manuscript path). E.g.
+    /// `sections/methods.tex` or `paper.pdf`.
+    pub file: String,
+    /// For an included LaTeX file, the path of the file that included it.
+    pub include_parent: Option<String>,
+    /// Include depth in the LaTeX project tree (0 for the root file, 1 for a
+    /// direct include, etc.).
+    pub include_depth: u32,
+    /// The 1-based line number within `file` where this content starts.
+    pub start_line: Option<u32>,
+    /// The 1-based line number within `file` where this content ends.
+    pub end_line: Option<u32>,
+    /// For a PDF, the 1-based page number this content occurred on.
+    pub page: Option<u32>,
+}
+
+impl SourceLocation {
+    /// A compact, human-readable rendering of the location, e.g.
+    /// `sections/methods.tex, line 42` or `paper.pdf, page 7`.
+    pub fn display(&self) -> String {
+        if let Some(page) = self.page {
+            format!("{}, page {}", self.file, page)
+        } else if let Some(start) = self.start_line {
+            match self.end_line {
+                Some(end) if end > start => {
+                    format!("{}, lines {}-{}", self.file, start, end)
+                }
+                _ => format!("{}, line {}", self.file, start),
+            }
+        } else {
+            self.file.clone()
+        }
+    }
+
+    /// Whether this location carries any hyper-specific pointer (line or page).
+    pub fn has_pointer(&self) -> bool {
+        self.start_line.is_some() || self.page.is_some()
+    }
+}
+
 /// Newtype for structured claim identifiers (e.g. `C17`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -250,6 +307,10 @@ pub struct Citation {
 pub struct Paragraph {
     pub id: ParagraphId,
     pub text: String,
+    /// Where this paragraph physically came from (source file, line, page).
+    /// Absent for legacy artifacts that predate provenance tracking.
+    #[serde(default)]
+    pub location: Option<SourceLocation>,
 }
 
 /// A section, containing paragraphs and floats.
@@ -259,6 +320,10 @@ pub struct Section {
     pub title: String,
     #[serde(default)]
     pub paragraphs: Vec<Paragraph>,
+    /// Where this section's heading physically came from (source file, line,
+    /// page). Absent for legacy artifacts that predate provenance tracking.
+    #[serde(default)]
+    pub location: Option<SourceLocation>,
 }
 
 /// Document-level metadata captured by the parser.

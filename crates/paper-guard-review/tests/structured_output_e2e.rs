@@ -36,7 +36,9 @@ fn tiny_doc() -> paper_guard_core::Document {
             paragraphs: vec![Paragraph {
                 id: ParagraphId("section_1.paragraph_1".into()),
                 text: "We measured the effect size via a controlled experiment.".into(),
+                location: None,
             }],
+            location: None,
         }],
         bibliography: vec![],
         citations: vec![],

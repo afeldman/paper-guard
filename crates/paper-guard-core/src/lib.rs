@@ -16,7 +16,7 @@ pub mod severity;
 pub use canonical::{
     CanonicalDocumentBuilder, Citation, Claim, ClaimId, ClaimType, Document, DocumentMeta,
     Equation, Evidence, EvidenceRef, Figure, Method, Paragraph, ParagraphId, Reference,
-    ReferenceId, Result_, Section, SectionId, Table, TableRef,
+    ReferenceId, Result_, Section, SectionId, SourceLocation, Table, TableRef,
 };
 pub use finding::{Finding, FindingCategory, FindingStatus, FindingValidationError, ReviewerKind};
 pub use integrity::{

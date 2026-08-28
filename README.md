@@ -72,6 +72,8 @@ adversarial tests guard the system).
 
 ## Installation
 
+### macOS / Linux (from source)
+
 Requires a Rust toolchain (`cargo` ≥ 1.85 recommended).
 
 ```bash
@@ -81,6 +83,22 @@ cargo build --release
 ```
 
 The CLI binary is `paper-guard` under `target/release/`.
+
+### Windows (prebuilt, no toolchain)
+
+Download the latest release archive `paper-guard-vX.Y.Z-windows-x86_64.zip`,
+extract it, and run `paper-guard.exe` from PowerShell or `cmd.exe`. No Rust,
+Python, Docker, WSL, or Kubernetes is required. See
+[`docs/windows.md`](docs/windows.md) and [`QUICKSTART.md`](QUICKSTART.md).
+
+Verify the downloaded executable:
+
+```powershell
+Get-FileHash .\paper-guard.exe -Algorithm SHA256   # compare against SHA256SUMS
+```
+
+Release artifacts and `SHA256SUMS` are produced reproducibly by GitHub Actions
+from the tagged Git commit — never hand-copied from a developer machine.
 
 ---
 

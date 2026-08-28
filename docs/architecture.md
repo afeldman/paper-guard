@@ -525,3 +525,88 @@ M4 adds:
 The default `cargo test --workspace` requires **no** external service (no
 OpenAI/Mammoth.ai/Ollama/Qdrant/Kubernetes/internet); all integrations are
 either mocked, offline, or opt-in.
+
+---
+
+## M6 — Cross-platform release & Windows team client
+
+M6 makes Paper Guard a first-class **cross-platform CLI** and produces a
+reproducible Windows release artifact. The scientific-integrity guarantees are
+unchanged; the client still **never** generates papers and **never** silently
+uploads manuscripts.
+
+### Cross-platform paths
+
+All platform-specific path assumptions were centralised in
+`paper-guard-app::paths`, built on the `dirs` crate. Configuration, data,
+cache, and logs are resolved per OS and never cross-contaminated:
+
+| Concern   | Windows                       | macOS                          | Linux (XDG)                  |
+|-----------|-------------------------------|--------------------------------|------------------------------|
+| Config    | `%APPDATA%\paper-guard`       | `~/Library/Application Support/paper-guard` | `$XDG_CONFIG_HOME/paper-guard` |
+| Data      | `%APPDATA%\paper-guard`       | `~/Library/Application Support/paper-guard` | `$XDG_DATA_HOME/paper-guard` |
+| Cache     | `%LOCALAPPDATA%\paper-guard\cache` | `~/Library/Caches/paper-guard` | `$XDG_CACHE_HOME/paper-guard` |
+| Logs      | `%LOCALAPPDATA%\paper-guard\logs` | `~/Library/Logs/paper-guard` | `$XDG_STATE_HOME/paper-guard/logs` |
+
+No `~/.config/paper-guard` is hard-coded for Windows. The on-disk `data_dir`
+default remains the relative, OS-independent `.paper-guard` for historical
+compatibility and per-project separation; the platform-absolute locations above
+are surfaced by `paper-guard diagnostics --paths` and documented in
+`docs/windows.md`.
+
+### Build & diagnostics
+
+- `paper-guard --version` reports the semantic version (`Paper Guard 0.6.0`).
+- `paper-guard info` and `paper-guard diagnostics [--paths]` expose non-secret
+  version / OS triple / commit / build profile, and the resolved path layout.
+- Build metadata (commit hash) is embedded by the release workflow via
+  `PAPER_GUARD_BUILD_COMMIT`; the binary is never hand-copied from a developer
+  machine.
+
+### Discovery on Windows
+
+`paper-guard-discovery` (mDNS/DNS-SD via `mdns_sd`) is provider-independent and
+cross-platform. The CLI depends only on `ServiceDiscovery` + `ServiceEndpoint`,
+never on Windows-specific internals. Discovery:
+
+- listens for mDNS responses up to the configured timeout, then returns
+  whatever it found (including an empty list — **not** an error);
+- never crashes when multicast is blocked / the firewall drops it / Wi-Fi
+  isolation is on — it prints
+  `No Paper Guard services found on the local network.`;
+- never falls back to an arbitrary server, and never uploads a manuscript.
+
+Explicit `--server` remains the deterministic fallback. Discovery remains
+**off by default**; `discover --force` does a one-shot browse.
+
+### Windows release & CI
+
+- `.github/workflows/ci.yml` builds, formats, checks, tests, and clippies the
+  workspace on `ubuntu-latest`, `macos-latest`, and `windows-latest` (Rust
+  `stable`), plus a CLI smoke job with Windows/POSIX branches exercising path-
+  with-spaces config handling and an offline deterministic local review.
+- `.github/workflows/release.yml` (triggered on an annotated, signed `v*` tag)
+  builds release binaries natively on `windows-latest` (`x86_64-pc-windows-msvc`),
+  `macos-latest` (x86_64 + aarch64), and `ubuntu-latest`, packages each into a
+  versioned ZIP (`paper-guard-vX.Y.Z-<os>-<arch>.zip`) containing the binary,
+  a `QUICKSTART.md`, and the LICENSE, produces a `SHA256SUMS` file, and creates
+  a GitHub Release with the artifacts, the source archive, and release notes.
+- Windows is built **natively** in CI; cross-compilation from macOS is not the
+  authoritative release process (§34).
+
+### Security
+
+- No secrets, private manuscripts, credentials, API tokens, signing keys, or
+  `.pfx`/private-key material are ever built into the binary or committed.
+- Authentication remains token-by-name: the config stores `auth_token_env`
+  (the variable **name**), and the value is read from the environment at
+  request time. No tokens go to the Windows Registry or plaintext files.
+- Manuscript contents are never logged (logging stays structured, console-only,
+  counts/identifiers only).
+- Discovery records and URLs are treated as untrusted input and are never
+  executed as commands; no shell injection is possible (the client never spawns
+  a shell).
+
+See `docs/windows.md` for the researcher-facing team-client quickstart and
+`QUICKSTART.md` for the research workflow.
+

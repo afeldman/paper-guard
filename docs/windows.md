@@ -13,7 +13,7 @@ Kubernetes, or a development environment.
 1. Download the latest release archive for Windows x86_64:
 
    ```
-   paper-guard-1.0.0-windows-x86_64.zip
+   paper-guard-1.0.0-x86_64-pc-windows-msvc.zip
    ```
 
 2. Extract it anywhere (e.g. `C:\Users\<You>\PaperGuard\`).

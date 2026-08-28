@@ -10,17 +10,18 @@ Paper Guard ships **self-contained binaries** for the supported platforms. No
 Rust, Cargo, Python, Docker, WSL, or Kubernetes is needed — just download the
 archive for your machine, extract it, and run it.
 
-| Platform       | Architecture | Archive suffix                     |
-| -------------- | ------------ | ---------------------------------- |
-| macOS          | ARM64        | `macos-arm64.zip`                  |
-| macOS          | x86_64       | `macos-x86_64.zip`                 |
-| Linux          | ARM64        | `linux-arm64.tar.gz`               |
-| Linux          | x86_64       | `linux-x86_64.tar.gz`              |
-| Windows        | x86_64       | `windows-x86_64.zip`               |
+| Platform       | Architecture | Rust target                | Archive                                              |
+| -------------- | ------------ | -------------------------- | ---------------------------------------------------- |
+| macOS          | ARM64        | `aarch64-apple-darwin`      | `paper-guard-v1.0.0-aarch64-apple-darwin.zip`        |
+| macOS          | x86_64       | `x86_64-apple-darwin`       | `paper-guard-v1.0.0-x86_64-apple-darwin.zip`         |
+| Linux          | ARM64        | `aarch64-unknown-linux-gnu` | `paper-guard-v1.0.0-aarch64-unknown-linux-gnu.zip`   |
+| Linux          | x86_64       | `x86_64-unknown-linux-gnu`  | `paper-guard-v1.0.0-x86_64-unknown-linux-gnu.zip`    |
+| Windows        | x86_64       | `x86_64-pc-windows-msvc`    | `paper-guard-v1.0.0-x86_64-pc-windows-msvc.zip`      |
 
-Every archive contains the binary, this `QUICKSTART.md`, and the `LICENSE`.
-Release artifacts are produced by GitHub Actions from the tagged Git commit —
-never hand-copied from a developer machine.
+Every archive contains the binary (`paper-guard`, or `paper-guard.exe` on
+Windows), this `QUICKSTART.md`, and the `LICENSE`. Release artifacts are
+produced by GitHub Actions from the tagged Git commit — never hand-copied from
+a developer machine.
 
 ## Verify your binary
 
@@ -36,14 +37,15 @@ alongside the archive and verify before extracting.
 - **macOS**
 
   ```bash
-  shasum -a 256 paper-guard-v1.0.0-macos-arm64.zip
+  shasum -a 256 paper-guard-v1.0.0-aarch64-apple-darwin.zip
+  # (use the archive filename for your architecture)
   # compare the output against the SHA256SUMS file
   ```
 
 - **Windows**
 
   ```powershell
-  Get-FileHash .\paper-guard-v1.0.0-windows-x86_64.zip -Algorithm SHA256
+  Get-FileHash .\paper-guard-v1.0.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256
   # compare the output against the SHA256SUMS file
   ```
 

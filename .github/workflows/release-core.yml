@@ -1,0 +1,496 @@
+# Reusable Paper Guard release pipeline.
+#
+# This is the single source of truth for building a release from an immutable
+# Git tag. It is invoked (via `workflow_call`) by BOTH entry points:
+#
+#   - .github/workflows/release.yml         (automatic: push a signed `v*` tag)
+#   - .github/workflows/release-manual.yml  (manual: rebuild a historical tag)
+#
+# By centralising the validation + matrix + checksums + publish logic here we
+# avoid duplicating ~200 lines across the two triggers and guarantee the manual
+# historical path exercises the exact same reproducibility contract as the
+# ordinary release path.
+#
+# Contract:
+#   - The `ref` input must point at an immutable tag; this workflow checks out
+#     exactly that ref and builds from the resulting commit. It never builds
+#     from an arbitrary default branch.
+#   - Artifacts are versioned by the tag (e.g. v1.0.0 -> paper-guard-v1.0.0).
+#   - Archives are ZIP files named by the Rust target triple so the intended
+#     platform is unambiguous, e.g. paper-guard-v1.0.0-aarch64-apple-darwin.zip.
+#   - Every release is gated on the full validation + security suite. If any
+#     platform build, the Trivy gate, cargo audit, or checksum verification
+#     fails, NO GitHub Release is created.
+#
+# Supported release targets:
+#   macOS ARM64   -> aarch64-apple-darwin          (native Apple Silicon runner)
+#   macOS x86_64  -> x86_64-apple-darwin           (native Intel macOS runner)
+#   Linux ARM64   -> aarch64-unknown-linux-gnu     (native container via `cross`)
+#   Linux x86_64  -> x86_64-unknown-linux-gnu      (native ubuntu-latest)
+#   Windows x86_64-> x86_64-pc-windows-msvc        (native MSVC; never MinGW)
+name: Release (core)
+
+on:
+  workflow_call:
+    inputs:
+      # The semver label with the leading "v", e.g. "v1.0.0" or "v0.9.0".
+      # Used for the release title and artifact filenames.
+      tag_name:
+        type: string
+        required: true
+      # The immutable git ref to check out and build, e.g. "refs/tags/v1.0.0".
+      # The exact advertised tag/commit is resolved inside this workflow and
+      # shown in the output so the provenance of every artifact is verifiable.
+      ref:
+        type: string
+        required: true
+
+# Least-privilege by default: every job inherits contents:read. Only the
+# publishing `release` job is granted the elevated contents:write it needs to
+# create the GitHub Release. Secrets/tokens are never written into artifacts.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  RUST_TOOLCHAIN: stable
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Resolve the exact tag -> commit mapping once, on a single job, so every
+  # downstream job knows the precise commit it is building and the human can
+  # confirm "requested tag = resolved commit" in the workflow output.
+  # ---------------------------------------------------------------------------
+  resolve:
+    name: resolve tag -> commit
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      commit: ${{ steps.meta.outputs.commit }}
+      tag: ${{ inputs.tag_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - name: Resolve version + commit
+        id: meta
+        run: |
+          version="${TAG_NAME#v}"
+          [ -n "$version" ] || { echo "empty version"; exit 1; }
+          commit="$(git rev-parse HEAD)"
+          echo "requested tag  : ${TAG_NAME}"
+          echo "resolved commit : ${commit}"
+          echo "version         : ${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "commit=${commit}" >> "$GITHUB_OUTPUT"
+        env:
+          TAG_NAME: ${{ inputs.tag_name }}
+
+  # ---------------------------------------------------------------------------
+  # Authoritative validation: fmt + test + clippy + release compile check +
+  # cargo audit. Runs once (on the fastest runner) rather than in every matrix
+  # job. Each matrix build below adds its own platform compile + binary smoke
+  # test. The release FAILS if any of this fails.
+  # ---------------------------------------------------------------------------
+  validation:
+    name: validation (fmt + test + clippy + audit + release build)
+    needs: resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - name: Confirm requested tag == checked commit
+        run: |
+          echo "building validated tag ${{ inputs.tag_name }} @ ${{ needs.resolve.outputs.commit }}"
+          test "$(git rev-parse HEAD)" = "${{ needs.resolve.outputs.commit }}"
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Format check
+        run: cargo fmt --all -- --check
+      - name: Test (workspace)
+        run: cargo test --workspace
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Build release (compile check)
+        run: cargo build --release -p paper-guard-cli
+      - name: Audit dependencies
+        run: cargo audit
+
+  # ---------------------------------------------------------------------------
+  # Cross-platform native release builds. Each job builds exactly one target,
+  # smoke-tests the resulting binary, stages QUICKSTART.md + LICENSE alongside
+  # it, and packages a versioned ZIP named by the Rust target triple.
+  # ---------------------------------------------------------------------------
+  build:
+    name: build (${{ matrix.target }})
+    needs: [resolve, validation]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS ARM64 — native Apple Silicon runner.
+          - os: macos-14
+            target: aarch64-apple-darwin
+            bin: paper-guard
+            ext: ""
+          # macOS x86_64 — native Intel macOS runner.
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            bin: paper-guard
+            ext: ""
+          # Linux ARM64 — reproduced via `cross` (pinned, containerised toolchain).
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            bin: paper-guard
+            ext: ""
+          # Linux x86_64 — native.
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin: paper-guard
+            ext: ""
+          # Windows x86_64 — native MSVC.
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: paper-guard
+            ext: .exe
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Confirm requested tag == checked commit
+        run: |
+          echo "building ${{ inputs.tag_name }} @ ${{ needs.resolve.outputs.commit }}"
+          test "$(git rev-parse HEAD)" = "${{ needs.resolve.outputs.commit }}"
+
+      - name: Install Rust toolchain (${{ matrix.target }})
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Set build metadata
+        id: meta
+        shell: bash
+        run: |
+          {
+            echo "version=${VERSION}"
+            echo "commit=${COMMIT}"
+            echo "artifact=paper-guard-v${VERSION}-${{ matrix.target }}.zip"
+          } >> "$GITHUB_OUTPUT"
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          COMMIT: ${{ needs.resolve.outputs.commit }}
+
+      # Install `cross` for the Linux ARM64 containerised build. `cargo install
+      # cross --locked` pins to the locked release; the cross-rs image is tagged
+      # per Rust toolchain for reproducibility.
+      - name: Install cross (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: cargo install cross --locked
+
+      # Build release. `PAPER_GUARD_BUILD_COMMIT` is embedded into the binary
+      # (commit hash only; never secrets) so every artifact is traceable to Git.
+      - name: Build release (${{ matrix.target }})
+        shell: bash
+        env:
+          PAPER_GUARD_BUILD_COMMIT: ${{ needs.resolve.outputs.commit }}
+        run: |
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            cross build --release --target ${{ matrix.target }} -p paper-guard-cli
+          else
+            cargo build --release --target ${{ matrix.target }} -p paper-guard-cli
+          fi
+
+      # -----------------------------------------------------------------------
+      # Binary smoke tests. This is NOT a real LLM review; it is a
+      # deterministic, offline check that the binary exists, starts, reports
+      # the expected version + commit, and that --help works with no dependency
+      # on the repository checkout (we cd to /tmp first for the runnable tests).
+      # -----------------------------------------------------------------------
+      - name: Smoke test — exists + version + help (POSIX)
+        shell: bash
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          BIN="target/${{ matrix.target }}/release/${{ matrix.bin }}${{ matrix.ext }}"
+          test -x "$BIN"
+          VERSION_ACTUAL="$($BIN --version)"
+          echo "version: $VERSION_ACTUAL"
+          case "$VERSION_ACTUAL" in
+            paper-guard\ ${{ needs.resolve.outputs.version }}) echo "version ok" ;;
+            *) echo "unexpected version: $VERSION_ACTUAL"; exit 1 ;;
+          esac
+          # Confirm the commit metadata was embedded (provenance). Capture to a
+          # variable to avoid a broken pipe from an early-exiting `grep -q`.
+          INFO_OUT="$($BIN info)"
+          echo "$INFO_OUT" | grep -q "commit=${{ needs.resolve.outputs.commit }}"
+          echo "$INFO_OUT"
+          # Copy away from the checkout and run from /tmp to prove there is no
+          # dependency on the repository working directory.
+          cp "$BIN" /tmp/pg-smoke
+          cd /tmp
+          ./pg-smoke --help >/dev/null
+          ./pg-smoke info >/dev/null
+          ./pg-smoke diagnostics --paths >/dev/null
+          echo "smoke ok: $(./pg-smoke info)"
+
+      - name: Smoke test — exists + version + help (Windows)
+        shell: powershell
+        if: runner.os == 'Windows'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = "target\${{ matrix.target }}\release\${{ matrix.bin }}${{ matrix.ext }}"
+          Test-Path $exe | Out-Host
+          & $exe --version
+          & $exe --help | Out-Null
+          & $exe info
+          & $exe diagnostics --paths | Out-Null
+          Write-Host "smoke ok"
+
+      # Assemble a clean package directory: exactly binary + QUICKSTART + LICENSE.
+      - name: Assemble package directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          PKGDIR="package"
+          mkdir -p "$PKGDIR"
+          cp "target/${{ matrix.target }}/release/${{ matrix.bin }}${{ matrix.ext }}" "$PKGDIR/"
+          cp QUICKSTART.md "$PKGDIR/QUICKSTART.md"
+          cp LICENSE "$PKGDIR/LICENSE"
+          ls -la "$PKGDIR"
+
+      # Create the versioned ZIP named by the Rust target triple.
+      - name: Package ZIP (${{ matrix.target }})
+        shell: bash
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          name="paper-guard-v${VERSION}-${{ matrix.target }}.zip"
+          ( cd package && zip -qr "../${name}" . )
+          ls -la "${name}"
+          echo "artifact=${name}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-guard-v${{ needs.resolve.outputs.version }}-${{ matrix.target }}
+          path: paper-guard-v${{ needs.resolve.outputs.version }}-${{ matrix.target }}.zip
+
+  # ---------------------------------------------------------------------------
+  # Trivy security gate for the release. The release must NOT be published if
+  # this job fails. We scan the tagged checkout filesystem for vulnerabilities
+  # (Cargo.lock) and secrets (skipping only generated build dirs).
+  #
+  # Scope: the release artifacts are the binary + QUICKSTART.md + LICENSE. We
+  # gate on vulnerabilities and secrets, which are what could affect a shipped
+  # artifact. Kubernetes misconfiguration findings on the OPTIONAL Helm chart
+  # under deploy/ are a documented, pre-existing, accepted exception (server-mode
+  # hardening gaps, not part of the distributable artifacts; surfaced separately
+  # via `trivy fs --scanners misconfig deploy/`).
+  # ---------------------------------------------------------------------------
+  trivy-gate:
+    name: security gate (trivy)
+    needs: [resolve, validation]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - name: Confirm requested tag == checked commit
+        run: |
+          test "$(git rev-parse HEAD)" = "${{ needs.resolve.outputs.commit }}"
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@v0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          skip-dirs: target
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+
+  # ---------------------------------------------------------------------------
+  # Checksums: generate SHA256SUMS covering every release archive and verify the
+  # checksums against the archives before publishing.
+  # ---------------------------------------------------------------------------
+  checksums:
+    name: checksums
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Generate SHA256SUMS
+        run: |
+          cd artifacts
+          ls -la
+          find . -type f -name '*.zip' -exec sha256sum {} \; | sort > SHA256SUMS
+          cat SHA256SUMS
+      - name: Verify checksums
+        run: |
+          cd artifacts
+          # Normalize any leading "./" from `find` so sha256sum --check matches.
+          sed -i 's#  \./#  #' SHA256SUMS
+          sha256sum --check SHA256SUMS
+      - name: Upload checksums + artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: |
+            artifacts/SHA256SUMS
+            artifacts/*.zip
+
+  # ---------------------------------------------------------------------------
+  # Source archive (present in every release alongside the binaries).
+  # ---------------------------------------------------------------------------
+  source:
+    name: source archive
+    needs: resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - name: Create source tarball
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          tar --exclude='./target' --exclude='./.git' -czf "paper-guard-v${VERSION}.tar.gz" .
+          ls -la "paper-guard-v${VERSION}.tar.gz"
+      - name: Upload source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-tarball
+          path: paper-guard-v*.tar.gz
+
+  # ---------------------------------------------------------------------------
+  # Publish the GitHub Release. Runs only after builds, checksums, the Trivy
+  # gate, and the source archive all succeed.
+  # ---------------------------------------------------------------------------
+  release:
+    name: publish release (${{ inputs.tag_name }})
+    needs: [checksums, trivy-gate, source, resolve]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: source-tarball
+          path: dist
+      - name: Generate release notes
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          TAG_NAME: ${{ inputs.tag_name }}
+          COMMIT: ${{ needs.resolve.outputs.commit }}
+          TAG_REF: ${{ inputs.ref }}
+        run: |
+          v="${VERSION}"
+          cat > NOTES.md <<EOF
+          # Paper Guard ${TAG_NAME}
+
+          Native, distribution-only binaries produced by GitHub Actions from the
+          immutable tagged Git commit. Paper Guard reviews an already-written
+          manuscript; it does not write scientific papers.
+
+          - **Version:** ${TAG_NAME}
+          - **Git commit:** ${COMMIT}
+          - **Tag ref:** ${TAG_REF}
+
+          ## Supported platforms
+
+          | Platform | Rust target | Archive |
+          | --- | --- | --- |
+          | macOS ARM64 | aarch64-apple-darwin | paper-guard-v${v}-aarch64-apple-darwin.zip |
+          | macOS x86_64 | x86_64-apple-darwin | paper-guard-v${v}-x86_64-apple-darwin.zip |
+          | Linux ARM64 | aarch64-unknown-linux-gnu | paper-guard-v${v}-aarch64-unknown-linux-gnu.zip |
+          | Linux x86_64 | x86_64-unknown-linux-gnu | paper-guard-v${v}-x86_64-unknown-linux-gnu.zip |
+          | Windows x86_64 | x86_64-pc-windows-msvc | paper-guard-v${v}-x86_64-pc-windows-msvc.zip |
+
+          Each archive contains the binary (paper-guard or paper-guard.exe on
+          Windows), QUICKSTART.md, and LICENSE.
+
+          ## Verify an archive
+
+          Verify against this release's SHA256SUMS file before extracting.
+
+          - Linux/macOS: sha256sum -c SHA256SUMS
+          - macOS: shasum -a 256 paper-guard-v${v}-<target>.zip
+          - Windows: Get-FileHash .\\paper-guard.exe -Algorithm SHA256
+
+          ## Install
+
+          Download your platform archive, verify its SHA-256 checksum against
+          SHA256SUMS, extract it, then run:
+
+          - Linux/macOS: ./paper-guard --help
+          - Windows: .\\paper-guard.exe --help
+
+          Configure a local OpenAI-compatible provider (e.g. Ollama), then run:
+
+          - Linux/macOS: ./paper-guard review paper.tex
+          - Windows: .\\paper-guard.exe review paper.tex
+
+          ## Artifacts
+
+          - paper-guard-v${v}-aarch64-apple-darwin.zip
+          - paper-guard-v${v}-x86_64-apple-darwin.zip
+          - paper-guard-v${v}-aarch64-unknown-linux-gnu.zip
+          - paper-guard-v${v}-x86_64-unknown-linux-gnu.zip
+          - paper-guard-v${v}-x86_64-pc-windows-msvc.zip
+          - paper-guard-v${v}.tar.gz (source archive)
+          - SHA256SUMS (checksums for every archive)
+
+          ## Documentation
+
+          See the [README](https://github.com/afeldman/paper-guard#readme) for
+          full instructions. Each archive also ships QUICKSTART.md.
+          EOF
+          cat NOTES.md
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag_name }}
+          name: Paper Guard ${{ inputs.tag_name }}
+          body_path: NOTES.md
+          files: |
+            dist/SHA256SUMS
+            dist/*.zip
+            dist/*.tar.gz
+          draft: false
+          prerelease: false

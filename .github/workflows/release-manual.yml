@@ -1,0 +1,104 @@
+# Manual historical release backfill for Paper Guard.
+#
+# Some tags predate the automated release pipeline and therefore have no
+# GitHub Release artifacts. This workflow lets a maintainer rebuild the release
+# for an existing, immutable tag (e.g. v0.7.0) without modifying the tag itself:
+#
+#   workflow_dispatch
+#     tag = v0.9.0
+#        -> verify the tag exists
+#        -> resolve requested tag -> commit
+#        -> check out exactly that tag & commit
+#        -> run the shared release-core pipeline
+#        -> build the 5 supported targets
+#        -> validate + security
+#        -> generate + verify SHA256SUMS
+#        -> create/update GitHub Release v0.9.0
+#
+# The Git tag is never rewritten, force-pushed, or moved. Only release
+# artifacts are produced, from the exact tagged commit.
+#
+# Usage:
+#   gh workflow run release-manual.yml -f tag=v0.9.0
+name: Release (manual backfill)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: >-
+          Existing immutable tag to rebuild, e.g. v0.7.0, v0.7.1, v0.8.0,
+          v0.9.0. Do NOT pass a branch name.
+        required: true
+        type: string
+
+# Least-privilege. Publishing a release requires contents:write (granted on the
+# call below); the verification job stays read-only.
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Verify the requested tag exists and resolve it to its exact commit. This
+  # gate ensures we never build from an arbitrary/typo'd ref and never touch an
+  # existing tag's history.
+  # ---------------------------------------------------------------------------
+  verify:
+    name: verify tag -> commit
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.check.outputs.tag }}
+      version: ${{ steps.check.outputs.version }}
+      commit: ${{ steps.check.outputs.commit }}
+      ref: ${{ steps.check.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Resolve and verify tag
+        id: check
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="${REQUESTED_TAG}"
+          # Normalise: accept "v0.9.0" or "refs/tags/v0.9.0".
+          tag="${tag#refs/tags/}"
+          # Reject anything that is not a version-shaped tag.
+          case "${tag}" in
+            v[0-9]*.[0-9]*.[0-9]*) : ;;
+            *) echo "error: '${tag}' is not a version tag (want vX.Y.Z)"; exit 1 ;;
+          esac
+          ref="refs/tags/${tag}"
+          if ! git rev-parse --verify --quiet "${ref}^{commit}" >/dev/null; then
+            echo "error: tag '${ref}' does not exist"
+            exit 1
+          fi
+          # The commit the annotated tag (if any) points at.
+          commit="$(git rev-list -n1 "${ref}")"
+          version="${tag#v}"
+          echo "requested tag  : ${tag}"
+          echo "resolved commit : ${commit}"
+          echo "version         : ${version}"
+          {
+            echo "tag=${tag}"
+            echo "version=${version}"
+            echo "commit=${commit}"
+            echo "ref=${ref}"
+          } >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
+  # Run the shared release pipeline against the verified immutable tag. The
+  # reusable workflow checks out the exact ref, validates, builds all 5 targets,
+  # runs the security gates, generates SHA256SUMS, and creates the GitHub
+  # Release. It never rewrites the Git tag.
+  # ---------------------------------------------------------------------------
+  release:
+    name: Release ${{ inputs.tag }}
+    needs: verify
+    uses: ./.github/workflows/release-core.yml
+    with:
+      tag_name: ${{ needs.verify.outputs.tag }}
+      ref: ${{ needs.verify.outputs.ref }}
+    permissions:
+      contents: write

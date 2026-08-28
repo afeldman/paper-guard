@@ -33,11 +33,22 @@ All notable changes to Paper Guard are documented here. The format is based on
   project includes, PDF page counts, missing/cyclic diagnostics) without
   running a review. Never modifies the source.
 - **Cross-platform release matrix** now includes **macOS x86_64** in addition
-  to macOS ARM64, Linux ARM64, Linux x86_64, and Windows x86_64. Archives use
-  friendly platform labels:
-  `paper-guard-1.0.0-macos-arm64.zip`, `-macos-x86_64.zip`,
-  `-linux-arm64.tar.gz`, `-linux-x86_64.tar.gz`, `-windows-x86_64.zip`.
+  to macOS ARM64, Linux ARM64, Linux x86_64, and Windows x86_64. Archives are
+  ZIP files named by the Rust target triple:
+  `paper-guard-1.0.0-aarch64-apple-darwin.zip`,
+  `-x86_64-apple-darwin.zip`, `-aarch64-unknown-linux-gnu.zip`,
+  `-x86_64-unknown-linux-gnu.zip`, `-x86_64-pc-windows-msvc.zip`.
   `SHA256SUMS` is generated and verified before publishing.
+- **Release pipeline** — a reusable `.github/workflows/release-core.yml` is
+  invoked by both the automatic tag trigger
+  (`.github/workflows/release.yml`, `on: push: tags: ['v*']`) and a manual
+  historical backfill workflow (`.github/workflows/release-manual.yml`,
+  `workflow_dispatch`). Every job checks out and verifies the exact tagged
+  commit (never `main`), runs validation + `cargo audit`, the five native
+  platform builds, binary smoke tests, the Trivy security gate, and generates
+  + verifies `SHA256SUMS` before creating the GitHub Release. Binary build
+  provenance (`PAPER_GUARD_BUILD_COMMIT`) is embedded and surfaced by
+  `paper-guard info` / `diagnostics`.
 - **GUI+API tests** — startup, localhost binding, API availability, review
   creation, style switching, JSON export, security boundary checks.
 
@@ -57,8 +68,12 @@ All notable changes to Paper Guard are documented here. The format is based on
 
 ### Changed
 
-- Versioned release artifacts are named by friendly platform labels instead of
-  the Rust target triple (e.g. `paper-guard-1.0.0-linux-x86_64.tar.gz`).
+- Release archives are now **ZIP files named by the Rust target triple**
+  (e.g. `paper-guard-1.0.0-linux-x86_64.zip` becomes
+  `paper-guard-1.0.0-x86_64-unknown-linux-gnu.zip`), making the intended
+  platform unambiguous. The GitHub Actions release pipeline is refactored into
+  a reusable `release-core.yml` plus automatic (`release.yml`) and manual
+  historical-backfill (`release-manual.yml`) entry points.
 
 ### Configuration Wizard (planned for v1.1)
 

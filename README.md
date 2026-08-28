@@ -229,16 +229,17 @@ See [`docs/windows.md`](docs/windows.md) for the detailed Windows guide.
 Paper Guard ships **self-contained release artifacts** for the supported
 platforms:
 
-| Platform       | Architecture | Release archive                                 |
-| -------------- | ------------ | ----------------------------------------------- |
-| macOS          | ARM64        | `paper-guard-vX.Y.Z-aarch64-apple-darwin.zip`   |
-| Linux          | ARM64        | `paper-guard-vX.Y.Z-aarch64-unknown-linux-gnu.tar.gz` |
-| Linux          | x86_64       | `paper-guard-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz` |
-| Windows        | x86_64       | `paper-guard-vX.Y.Z-x86_64-pc-windows-msvc.zip` |
+| Platform       | Architecture | Rust target                | Release archive                                       |
+| -------------- | ------------ | -------------------------- | ----------------------------------------------------- |
+| macOS          | ARM64        | `aarch64-apple-darwin`      | `paper-guard-vX.Y.Z-aarch64-apple-darwin.zip`         |
+| macOS          | x86_64       | `x86_64-apple-darwin`       | `paper-guard-vX.Y.Z-x86_64-apple-darwin.zip`          |
+| Linux          | ARM64        | `aarch64-unknown-linux-gnu` | `paper-guard-vX.Y.Z-aarch64-unknown-linux-gnu.zip`    |
+| Linux          | x86_64       | `x86_64-unknown-linux-gnu`  | `paper-guard-vX.Y.Z-x86_64-unknown-linux-gnu.zip`     |
+| Windows        | x86_64       | `x86_64-pc-windows-msvc`    | `paper-guard-vX.Y.Z-x86_64-pc-windows-msvc.zip`       |
 
 Each archive contains the binary (`paper-guard` / `paper-guard.exe`),
-`QUICKSTART.md`, and `LICENSE`. macOS Intel is intentionally not shipped in
-this milestone.
+`QUICKSTART.md`, and `LICENSE`. All five platforms are built natively by GitHub
+Actions.
 
 The intended workflow is:
 
@@ -783,14 +784,15 @@ Download the appropriate binary for your platform from the GitHub Release:
 
 | Platform | Archive |
 | --- | --- |
-| macOS ARM64 | `paper-guard-1.0.0-macos-arm64.zip` |
-| macOS x86_64 | `paper-guard-1.0.0-macos-x86_64.zip` |
-| Linux ARM64 | `paper-guard-1.0.0-linux-arm64.tar.gz` |
-| Linux x86_64 | `paper-guard-1.0.0-linux-x86_64.tar.gz` |
-| Windows x86_64 | `paper-guard-1.0.0-windows-x86_64.zip` |
+| macOS ARM64 | `paper-guard-1.0.0-aarch64-apple-darwin.zip` |
+| macOS x86_64 | `paper-guard-1.0.0-x86_64-apple-darwin.zip` |
+| Linux ARM64 | `paper-guard-1.0.0-aarch64-unknown-linux-gnu.zip` |
+| Linux x86_64 | `paper-guard-1.0.0-x86_64-unknown-linux-gnu.zip` |
+| Windows x86_64 | `paper-guard-1.0.0-x86_64-pc-windows-msvc.zip` |
 
-Each archive contains the `paper-guard` binary, `QUICKSTART.md`, and `LICENSE`.
-Verify the checksum against `SHA256SUMS` from the Release.
+Each archive contains the `paper-guard` binary (`paper-guard.exe` on Windows),
+`QUICKSTART.md`, and `LICENSE`. Verify the checksum against `SHA256SUMS` from
+the Release before extracting (see the *Verify your binary* section above).
 
 ### Review a paper
 

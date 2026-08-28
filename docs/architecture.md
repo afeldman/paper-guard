@@ -659,31 +659,84 @@ Explicit `--server` remains the deterministic fallback. Discovery remains
   runs a **Trivy** filesystem scan (`trivy fs .`) on every push and pull request
   (exit on secrets and actionable HIGH/CRITICAL findings), and a `cargo audit`
   job. CI uses least-privilege `permissions: contents: read`.
-- `.github/workflows/release.yml` (triggered on an annotated, signed `v*` tag)
-  runs an authoritative `validation` job (fmt + test + clippy + release build),
-  then builds release binaries on the supported cross-platform matrix:
-  `aarch64-apple-darwin` (native `macos-14` Apple Silicon), `x86_64-apple-darwin`
-  (native `macos-13` Intel), `aarch64-unknown-linux-gnu` (via `cross`
-  containerised build on `ubuntu-latest`), `x86_64-unknown-linux-gnu` (native
-  `ubuntu-latest`), and `x86_64-pc-windows-msvc` (native `windows-latest`,
-  MSVC — never MinGW). All five platforms are built by GitHub Actions; no
-  developer machine is used for release binaries.
+- `.github/workflows/release.yml` (triggered automatically on any pushed `v*`
+  tag, e.g. `git tag -s v1.0.0 && git push origin v1.0.0`) and
+  `.github/workflows/release-manual.yml` (manual historical backfill via
+  `workflow_dispatch`, taking an existing immutable tag like `v0.9.0`) both
+  delegate to the **shared reusable workflow** `.github/workflows/release-core.yml`.
+  This centralises the authoritative release path so both triggers exercise
+  the exact same reproducibility contract: check out the tagged commit
+  (never `main`), run `validation` (fmt + test + clippy + release build +
+  **cargo audit**), then build release binaries on the supported
+  cross-platform matrix: `aarch64-apple-darwin` (native `macos-14` Apple
+  Silicon), `x86_64-apple-darwin` (native Intel macOS runner), `aarch64-unknown-
+  linux-gnu` (via `cross` containerised build on `ubuntu-latest`), `x86_64-unknown-
+  linux-gnu` (native `ubuntu-latest`), and `x86_64-pc-windows-msvc` (native
+  `windows-latest`, MSVC — never MinGW). All five platforms are built by GitHub
+  Actions; no developer machine is used for release binaries. Each build first
+  verifies that the checked-out commit equals the tag's resolved commit, so the
+  artifact always corresponds to the immutable tag.
 - Each release binary is **smoke-tested** in CI (`--version`, `--help`, `info`,
   `diagnostics --paths`), embedded with the Git commit via
   `PAPER_GUARD_BUILD_COMMIT` (provenance), packaged with `QUICKSTART.md` and the
-  LICENSE into a versioned archive named by its friendly platform label
-  (`paper-guard-v1.0.0-macos-arm64.zip`, `-macos-x86_64.zip`, `-linux-arm64.tar.gz`,
-  `-linux-x86_64.tar.gz`, `-windows-x86_64.zip`), and covered by a generated
-  `SHA256SUMS` that is verified before publishing.
+  LICENSE into a versioned **ZIP archive named by its Rust target triple**
+  (`paper-guard-v1.0.0-aarch64-apple-darwin.zip`,
+  `-x86_64-apple-darwin.zip`, `-aarch64-unknown-linux-gnu.zip`,
+  `-x86_64-unknown-linux-gnu.zip`, `-x86_64-pc-windows-msvc.zip`; the Windows
+  zip contains `paper-guard.exe`), and covered by a generated `SHA256SUMS` that
+  is verified before publishing.
 - A **Trivy security gate** runs before the release is published; the release
-  job only runs after builds, checksums, the Trivy gate, and the source archive
-  all succeed.
+  job only runs after builds, checksums, the Trivy gate, the source archive
+  and cargo audit all succeed. If any platform build, the Trivy gate, or
+  checksum verification fails, **no** GitHub Release is created.
 - Windows is built **natively** in CI; cross-compilation from macOS is not the
   authoritative release process.
 - **Dependabot** (`.github/dependabot.yml`) monitors **Cargo** and **GitHub
   Actions** with weekly, bounded update PRs (security updates remain enabled).
   Dependency updates must pass the normal CI (fmt, test, clippy, build, Trivy)
   and are merged only after human review — nothing is auto-merged.
+
+### Release process & historical backfill
+
+The **Git tag is the immutable source of truth** for a release. The official
+distribution path is:
+
+```text
+git tag -s v1.0.0 -m "Paper Guard v1.0.0"
+git push origin v1.0.0
+        ↓
+GitHub Actions (`on: push: tags: ['v*']`)
+        ↓
+check out the tagged commit (never `main`)
+        ↓
+resolve tag -> commit, verify every job checks out that commit
+        ↓
+validation (fmt + test + clippy + release build) + cargo audit
+        ↓
+5 native platform builds (ZIP, named by Rust target triple) + smoke tests
+        ↓
+Trivy security gate (fail on vuln/secret) + SHA256SUMS (generate + verify)
+        ↓
+GitHub Release with binaries + source archive + SHA256SUMS + release notes
+```
+
+No release binary is ever built manually on a developer machine.
+
+**Historical backfill.** Tags that predate the automated pipeline (e.g.
+`v0.4.0` … `v0.9.0`) have no GitHub Release artifacts. A maintainer can rebuild
+them from their immutable tag via the manual workflow — the tag itself is never
+modified, force-pushed, or recreated:
+
+```bash
+gh workflow run release-manual.yml --ref master -f tag=v0.9.0
+```
+
+The workflow verifies the tag exists, resolves the tag → commit, checks out
+exactly that commit, runs the shared `release-core` pipeline (validation,
+builds, security gates, checksums), and creates/updates the GitHub Release for
+that tag. Run `git tag --list 'v*' --sort=version:refname` to see which tags
+are eligible, and compare against `gh release list` to see which already have
+artifacts.
 
 ### Security
 

@@ -321,7 +321,7 @@ jobs:
         run: |
           test "$(git rev-parse HEAD)" = "${{ needs.resolve.outputs.commit }}"
       - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -381,8 +381,12 @@ jobs:
       - name: Create source tarball
         env:
           VERSION: ${{ needs.resolve.outputs.version }}
+        # Export the exact tagged tree directly from Git. git archive is
+        # deterministic (no working-tree files that can change mid-read, which
+        # made GNU tar fail with "file changed as we read it") and guarantees
+        # the source tarball matches the immutable tag commit byte-for-byte.
         run: |
-          tar --exclude='./target' --exclude='./.git' -czf "paper-guard-v${VERSION}.tar.gz" .
+          git archive --format=tar.gz -o "paper-guard-v${VERSION}.tar.gz" HEAD
           ls -la "paper-guard-v${VERSION}.tar.gz"
       - name: Upload source archive
         uses: actions/upload-artifact@v4

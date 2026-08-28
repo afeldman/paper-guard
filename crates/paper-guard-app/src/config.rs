@@ -47,8 +47,20 @@ impl Default for LlmConfig {
 }
 
 /// Backend-specific provider configuration.
+///
+/// `rename_all = "kebab-case"` makes the documented TOML key
+/// `[providers.openai-compatible]` (hyphenated) map onto the Rust field
+/// `openai_compatible`. Serde does not translate `-` to `_` automatically, so
+/// without this rename the entire provider section would be silently ignored
+/// as an unknown field and `Default` values used instead.
+///
+/// Note: `deny_unknown_fields` is intentionally NOT applied here. The minimal
+/// fix is the kebab-case mapping above; failing loudly on unknown provider
+/// sub-keys (e.g. a legacy underscore spelling) would be a separate behavior
+/// change that could reject previously-tolerated configs, so it is left for a
+/// deliberate follow-up rather than bundled with this bug fix.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, rename_all = "kebab-case")]
 #[derive(Default)]
 pub struct ProvidersConfig {
     pub openai_compatible: OpenAICompatibleSectionConfig,
@@ -595,6 +607,70 @@ timeout_seconds = 60
         // environment variable *name* is allowed.
         assert!(!json.contains("sk-"));
         assert!(json.contains("OPENAI_API_KEY"));
+    }
+
+    #[test]
+    fn providers_openai_compatible_honors_kebab_case_key() {
+        // Regression for the config bug where the documented hyphenated TOML
+        // key `[providers.openai-compatible]` did not map onto the Rust field
+        // `openai_compatible`. Because serde silently ignored the unknown
+        // table, the section fell back to `Default` (gpt-4o-mini +
+        // OPENAI_API_KEY). This test pins the documented key to the supplied
+        // values so the real LM-Studio / Ollama / OpenAI configs actually
+        // take effect.
+        let src = r#"
+[llm]
+provider = "openai-compatible"
+
+[providers.openai-compatible]
+base_url = "http://localhost:1234/v1"
+model = "qwen/qwen3.5-9b"
+api_key_env = ""
+timeout_seconds = 120
+max_retries = 2
+structured_output = true
+vision = false
+"#;
+        let cfg: AppConfig = toml::from_str(src).unwrap();
+
+        // Provider selection + endpoint come from the supplied values, NOT the
+        // defaults.
+        assert_eq!(cfg.llm.provider, "openai-compatible");
+        let sec = &cfg.providers.openai_compatible;
+        assert_eq!(sec.base_url, "http://localhost:1234/v1");
+        assert_eq!(sec.model, "qwen/qwen3.5-9b");
+        assert_eq!(sec.timeout_seconds, 120);
+        assert_eq!(sec.max_retries, 2);
+        assert!(sec.structured_output);
+        assert!(!sec.vision);
+
+        // Keyless case: `api_key_env = ""` must be treated as "no API key" —
+        // i.e. it must never request `OPENAI_API_KEY`. Per the existing
+        // configuration semantics, an empty value is keyless (the provider
+        // sends no Authorization header). We assert the environment-variable
+        // name is blank so no key is required, while deliberately NOT changing
+        // that semantics (no `Some("") -> None` normalization is introduced).
+        assert_eq!(sec.api_key_env.as_deref().map(str::trim), Some(""));
+    }
+
+    #[test]
+    fn providers_openai_compatible_defaults_survive_without_section() {
+        // When the section is absent entirely, defaults must remain (backward
+        // compatibility): an empty `[providers]` table still resolves to the
+        // default OpenAI-compatible endpoint.
+        let src = r#"
+[llm]
+provider = "openai-compatible"
+"#;
+        let cfg: AppConfig = toml::from_str(src).unwrap();
+        let sec = &cfg.providers.openai_compatible;
+        assert_eq!(sec.model, "gpt-4o-mini");
+        assert_eq!(sec.base_url, "https://api.openai.com/v1");
+        assert_eq!(
+            sec.api_key_env.as_deref(),
+            Some("OPENAI_API_KEY"),
+            "default must remain key-bearing to preserve existing behavior"
+        );
     }
 
     #[test]

@@ -68,3 +68,23 @@ pub fn log_memory_retrieval(count: usize) {
 pub fn log_memory_unavailable() {
     warn!("pipeline | stage=review | agent=pipeline | event=memory_unavailable");
 }
+
+/// Log LaTeX project missing-include diagnostics (structural, never content).
+pub fn log_project_missing_includes(run_id: &str, missing: &[String]) {
+    info!(
+        "{} | stage=parse | agent=pipeline | event=latex_missing_includes | count={} | missing={:?}",
+        run_id,
+        missing.len(),
+        missing
+    );
+}
+
+/// Log LaTeX project include-cycle diagnostics (structural, never content).
+pub fn log_project_cycles(run_id: &str, cycles: &[String]) {
+    warn!(
+        "{} | stage=parse | agent=pipeline | event=latex_include_cycle | count={} | cycles={:?}",
+        run_id,
+        cycles.len(),
+        cycles
+    );
+}

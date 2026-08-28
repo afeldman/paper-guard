@@ -11,7 +11,7 @@ use paper_guard_core::{ContentHash, Document, RevisionInstruction, SCHEMA_VERSIO
 use paper_guard_ledger::{
     AgentOutcome, FindingRecord, JudgedRecord, LedgerStore, RunRecord, RunStatus, ValidationRecord,
 };
-use paper_guard_parser::{parse_source_path, parser_for_format, SourceFormat};
+use paper_guard_parser::{parse_source_path, SourceFormat};
 use paper_guard_review::{
     collect_findings, AgentStatus, Judge, ReviewRunner, Reviewer, ReviewerContext, ReviewerKind,
     ReviewerSettings,
@@ -32,16 +32,6 @@ pub struct RunOutput {
 /// Read a source file's bytes.
 pub fn read_source(path: &str) -> anyhow::Result<Vec<u8>> {
     Ok(std::fs::read(path)?)
-}
-
-/// Determine the source format, honoring config override then extension.
-fn resolve_format(path: &str, config: &AppConfig) -> SourceFormat {
-    if let Some(fmt) = &config.input.format {
-        if let Ok(f) = fmt.parse() {
-            return f;
-        }
-    }
-    format_from_extension(path)
 }
 
 /// Build the provider for a run based on the `[llm] provider` selection.

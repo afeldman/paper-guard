@@ -300,14 +300,17 @@ jobs:
         shell: powershell
         if: runner.os == 'Windows'
         run: |
-          $ErrorActionPreference = 'Stop'
+          # `info` / `diagnostics` were added after the earliest tags; only run
+          # them when this version supports them. Use $ErrorActionPreference =
+          # 'Continue' so a subcommand that writes to stderr reports a
+          # NativeCommandError instead of terminating the script mid-check;
+          # we gate on $LASTEXITCODE ourselves.
+          $ErrorActionPreference = 'Continue'
           $exe = "target\${{ matrix.target }}\release\${{ matrix.bin }}${{ matrix.ext }}"
           Test-Path $exe | Out-Host
           & $exe --version
           & $exe --help | Out-Null
-          # `info` / `diagnostics` were added after the earliest tags; only run
-          # them when this version supports them (historical backfills).
-          $info = (& $exe info 2>$null)
+          $null = & $exe info 2>$null
           if ($LASTEXITCODE -eq 0) {
             & $exe diagnostics --paths | Out-Null
             Write-Host "smoke ok"

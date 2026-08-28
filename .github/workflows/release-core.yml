@@ -483,7 +483,7 @@ jobs:
           EOF
           cat NOTES.md
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ inputs.tag_name }}
           name: Paper Guard ${{ inputs.tag_name }}

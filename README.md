@@ -709,7 +709,7 @@ trivy fs .
 ```
 
 The test suite is fully offline — no test makes a real API call. As of the
-v1.0.0 release the workspace has **286 passing tests** with a clean
+v1.0.0 release the workspace has **291 passing tests** with a clean
 `clippy -D warnings` and clean `fmt --check`. An optional live end-to-end
 harness runs against a real endpoint only when explicitly enabled and never in
 CI (see [`docs/architecture.md`](docs/architecture.md)).

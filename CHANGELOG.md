@@ -15,7 +15,9 @@ All notable changes to Paper Guard are documented here. The format is based on
   reported as deterministic diagnostics. Path traversal and symlink escape
   outside the project root are blocked (fail closed). Source content is cached
   within a review run and include depth/fragment-count caps prevent
-  exponential include graphs.
+  exponential include graphs. Resolved relative paths and per-paragraph
+  provenance are normalized to forward slashes so persisted run records are
+  identical across POSIX and Windows.
 - **PDF manuscripts** as a first-class review source. In-process text
   extraction via `lopdf` (no OCR, no embedded content execution, no shell)
   with per-page provenance. Malformed PDFs fail with `PDF_INVALID`; encrypted

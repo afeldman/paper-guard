@@ -151,6 +151,18 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Print non-secret build and platform diagnostics (version, OS triple,
+    /// commit, build profile, and resolved config paths). Never prints secrets
+    /// or manuscript contents.
+    Diagnostics {
+        /// Also show the resolved platform config/data/cache/log directories.
+        #[arg(long)]
+        paths: bool,
+    },
+    /// Print version and platform identity. A stub of `--version` that also
+    /// reports the build profile and commit without any review output.
+    Info,
+
     /// Interact with Review Memory (retrieval-approved units only).
     Memory {
         /// Sub-command.
@@ -409,6 +421,24 @@ async fn main() -> anyhow::Result<()> {
         Command::Discover { config, force } => {
             run_discover(config.as_deref(), force).await?;
         }
+        Command::Diagnostics { paths } => {
+            print_diagnostics(paths);
+        }
+        Command::Info => {
+            println!(
+                "Paper Guard {} ({}, {}) commit={} profile={}",
+                paper_guard_app::build_info::version(),
+                paper_guard_app::build_info::os_triple(),
+                paper_guard_app::build_info::os_family(),
+                paper_guard_app::build_info::commit(),
+                paper_guard_app::build_info::build_profile()
+            );
+            println!(
+                "config={}|data={}",
+                platform_or_none(paper_guard_app::paths::config_dir()),
+                platform_or_none(paper_guard_app::paths::data_dir())
+            );
+        }
         Command::Memory { command } => match command {
             MemoryCommand::List { config } => {
                 let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
@@ -642,6 +672,44 @@ fn print_endpoint(ep: &paper_guard_discovery::ServiceEndpoint, status: &str) {
         println!("  Capabilities: {}", ep.capabilities.join(", "));
     }
     let _ = status;
+}
+
+/// Render an optional platform path as a string for diagnostics; never leaks a
+/// missing directory, and never contains secret material.
+fn platform_or_none(p: Option<PathBuf>) -> String {
+    match p {
+        Some(p) => p.to_string_lossy().into_owned(),
+        None => "(unresolved)".into(),
+    }
+}
+
+/// Print non-secret build/platform diagnostics. `paths` additionally shows the
+/// resolved platform config/data/cache/log directories (documented locations).
+fn print_diagnostics(show_paths: bool) {
+    use paper_guard_app::build_info;
+    use paper_guard_app::paths;
+    println!(
+        "Paper Guard {} ({}, {})",
+        build_info::version(),
+        build_info::os_triple(),
+        build_info::os_family()
+    );
+    println!(
+        "commit={} profile={}",
+        build_info::commit(),
+        build_info::build_profile()
+    );
+    if show_paths {
+        println!("config_dir={}", platform_or_none(paths::config_dir()));
+        println!("data_dir={}", platform_or_none(paths::data_dir()));
+        println!("cache_dir={}", platform_or_none(paths::cache_dir()));
+        println!("log_dir={}", platform_or_none(paths::log_dir()));
+        println!(
+            "default_config_path={}",
+            platform_or_none(paths::default_config_path())
+        );
+        println!("default_data_dir={}", paths::default_data_dir());
+    }
 }
 
 // ---------------------------------------------------------------------------

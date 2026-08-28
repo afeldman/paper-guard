@@ -154,3 +154,26 @@ jobs:
       - name: Local review smoke (Windows)
         if: runner.os == 'Windows'
         run: .\target\debug\paper-guard.exe review examples\sample-paper.tex
+
+      # GUI startup smoke (binds to 127.0.0.1, serves the dashboard) — POSIX
+      - name: GUI startup smoke (POSIX)
+        if: runner.os != 'Windows'
+        run: |
+          ./target/debug/paper-guard --gui > /tmp/pg-gui.log 2>&1 &
+          GUI_PID=$!
+          sleep 2
+          curl -sf http://127.0.0.1:8080/health
+          curl -sf http://127.0.0.1:8080/gui/dashboard >/dev/null
+          kill $GUI_PID 2>/dev/null || true
+
+      # GUI startup smoke (binds to 127.0.0.1, serves the dashboard) — Windows
+      - name: GUI startup smoke (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $p = Start-Process -FilePath .\target\debug\paper-guard.exe -ArgumentList '--gui' -PassThru -RedirectStandardOutput .\pg-gui.log -RedirectStandardError .\pg-gui.err
+          Start-Sleep -Seconds 2
+          try {
+            Invoke-RestMethod -Uri 'http://127.0.0.1:8080/health'
+          } finally {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          }

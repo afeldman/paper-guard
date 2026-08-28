@@ -556,7 +556,7 @@ are surfaced by `paper-guard diagnostics --paths` and documented in
 
 ### Build & diagnostics
 
-- `paper-guard --version` reports the semantic version (`Paper Guard 0.6.0`).
+- `paper-guard --version` reports the semantic version (e.g. `Paper Guard 0.7.0`).
 - `paper-guard info` and `paper-guard diagnostics [--paths]` expose non-secret
   version / OS triple / commit / build profile, and the resolved path layout.
 - Build metadata (commit hash) is embedded by the release workflow via

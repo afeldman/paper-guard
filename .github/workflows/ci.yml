@@ -1,0 +1,124 @@
+# Continuous integration for Paper Guard.
+#
+# A single matrix builds and tests the workspace on Linux, macOS, and Windows
+# so that cross-platform regressions are caught early. Windows is a first-class
+# build target here; the release artifact (paper-guard.exe) is produced by the
+# separate release workflow which runs only on a tag.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # Fail the build on warnings to keep the warning debt at zero.
+  RUSTFLAGS: "-D warnings"
+  CARGO_TERM_COLOR: never
+
+jobs:
+  security:
+    name: security audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Audit dependencies
+        run: cargo audit
+
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        rust: [stable]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
+
+      # Cache dependencies so builds stay fast.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Check
+        run: cargo check --workspace --all-targets
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Build (debug, no network)
+        run: cargo build --workspace
+
+  # A light, deterministic smoke test of the CLI's public surface on each OS.
+  smoke:
+    name: cli smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build CLI
+        run: cargo build -p paper-guard-cli
+
+      # info + diagnostics (POSIX shells)
+      - name: Info + diagnostics (POSIX)
+        if: runner.os != 'Windows'
+        run: |
+          ./target/debug/paper-guard info
+          ./target/debug/paper-guard diagnostics --paths
+
+      # info + diagnostics (Windows PowerShell)
+      - name: Info + diagnostics (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          .\target\debug\paper-guard.exe info
+          .\target\debug\paper-guard.exe diagnostics --paths
+
+      # init config showing spaces are handled as file paths (POSIX)
+      - name: Init config with spaces (POSIX)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p "spaces dir"
+          ./target/debug/paper-guard init "spaces dir/config.toml"
+          test -f "spaces dir/config.toml"
+
+      # init config showing spaces are handled as file paths (Windows)
+      - name: Init config with spaces (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          New-Item -ItemType Directory -Force -Path "spaces dir" | Out-Null
+          .\target\debug\paper-guard.exe init "spaces dir\config.toml"
+          Test-Path "spaces dir\config.toml"
+
+      # Local review smoke (offline, deterministic) — POSIX
+      - name: Local review smoke (POSIX)
+        if: runner.os != 'Windows'
+        run: ./target/debug/paper-guard review examples/sample-paper.tex
+
+      # Local review smoke (offline, deterministic) — Windows
+      - name: Local review smoke (Windows)
+        if: runner.os == 'Windows'
+        run: .\target\debug\paper-guard.exe review examples\sample-paper.tex

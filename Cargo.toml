@@ -49,7 +49,7 @@ wiremock = "0.6"
 axum = "0.7"
 tower = "0.5"
 base64 = "0.23"
-dirs = "5"
+dirs = "6"
 
 # --- Internal crates ---
 paper-guard-core = { path = "crates/paper-guard-core" }

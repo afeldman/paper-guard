@@ -52,7 +52,7 @@ jobs:
       commit: ${{ steps.check.outputs.commit }}
       ref: ${{ steps.check.outputs.ref }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Resolve and verify tag

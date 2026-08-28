@@ -304,7 +304,9 @@ jobs:
           # them when this version supports them. Use $ErrorActionPreference =
           # 'Continue' so a subcommand that writes to stderr reports a
           # NativeCommandError instead of terminating the script mid-check;
-          # we gate on $LASTEXITCODE ourselves.
+          # we gate on $LASTEXITCODE ourselves and end with an explicit exit 0
+          # (otherwise PowerShell propagates the leftover $LASTEXITCODE from the
+          # probed `info` subcommand as the process exit code).
           $ErrorActionPreference = 'Continue'
           $exe = "target\${{ matrix.target }}\release\${{ matrix.bin }}${{ matrix.ext }}"
           Test-Path $exe | Out-Host
@@ -317,6 +319,7 @@ jobs:
           } else {
             Write-Host "smoke ok (basic: info not present in this tag)"
           }
+          exit 0
 
       # Assemble a clean package directory. LICENSE ships in every tag;
       # QUICKSTART.md was only added from v0.7.0 on, so older historical tags

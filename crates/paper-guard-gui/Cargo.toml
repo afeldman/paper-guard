@@ -1,0 +1,23 @@
+[package]
+name = "paper-guard-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Local web GUI for Paper Guard — a presentation/control layer over the shared API and domain layers."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+axum.workspace = true
+tower.workspace = true
+chrono.workspace = true
+paper-guard-core.workspace = true
+paper-guard-app.workspace = true
+paper-guard-ledger.workspace = true
+paper-guard-report.workspace = true
+paper-guard-service.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

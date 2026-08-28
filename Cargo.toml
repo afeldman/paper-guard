@@ -15,6 +15,7 @@ members = [
     "crates/paper-guard-client",
     "crates/paper-guard-discovery",
     "crates/paper-guard-cli",
+    "crates/paper-guard-gui",
 ]
 
 [workspace.package]
@@ -65,4 +66,5 @@ paper-guard-report = { path = "crates/paper-guard-report" }
 paper-guard-service = { path = "crates/paper-guard-service" }
 paper-guard-client = { path = "crates/paper-guard-client" }
 paper-guard-discovery = { path = "crates/paper-guard-discovery" }
+paper-guard-gui = { path = "crates/paper-guard-gui" }
 

@@ -27,8 +27,24 @@ api_key_env = "OPENAI_API_KEY"
 model = "gpt-4o-mini"
 timeout_seconds = 120
 max_retries = 2
-# The reviewer side always validates structure; this requests JSON mode from
-# the endpoint when supported.
+# Controls how the endpoint constrains its output at the *transport* layer.
+# Structured output only shapes the JSON the endpoint returns; it does NOT make
+# an LLM scientifically trustworthy. Scientific validity is enforced separately
+# by Paper Guard's domain validation, evidence checks, provenance, Judge, and
+# integrity guards. JSON Schema enforcement != scientific correctness.
+#
+#   structured_output = false          # free-form; reviewer-side validation still enforces JSON
+#   structured_output = true           # {"type":"json_object"} (historical default)
+#   structured_output = "json_object"  # same as `true`
+#   structured_output = "json_schema"  # full JSON Schema (LM Studio/Ollama servers)
+#
+# When "json_schema" is set, Paper Guard derives a strict JSON Schema from the
+# reviewer finding type (numeric confidence, required fields) and sends it in
+# the request `response_format`. If the endpoint cannot honour the requested
+# mode, Paper Guard fails explicitly rather than silently downgrading. Use
+# `true` (json_object) for OpenAI / Mammoth.ai; use "json_schema" for local
+# servers such as LM Studio / Ollama. If a server rejects json_object (e.g.
+# LM Studio requires json_schema), switch to "json_schema".
 structured_output = true
 # Set to true only if the configured model actually supports vision.
 vision = false

@@ -34,11 +34,22 @@ base_url = "http://localhost:11434/v1"
 model = "llama3.2"
 timeout_seconds = 120
 max_retries = 2
-# Ollama generally supports structured JSON output via a JSON schema; if your
-# local model cannot honour `response_format` reliably, set this to false and
-# reviewer-side structured validation (REVIEWER_OUTPUT_INVALID) still protects
-# the pipeline.
-structured_output = true
+# Ollama is an OpenAI-compatible local server. Structured output only constrains
+# the JSON transport shape; it does NOT make a local model scientifically
+# trustworthy — scientific validity is still enforced by Paper Guard's domain
+# validation, evidence checks, provenance, Judge, and integrity guards.
+# JSON Schema enforcement != scientific correctness.
+#
+#   structured_output = false          # free-form; reviewer-side validation still enforces JSON
+#   structured_output = true           # {"type":"json_object"}
+#   structured_output = "json_object"  # same as `true`
+#   structured_output = "json_schema"  # strict JSON Schema (recommended for Ollama)
+#
+# For local servers a strict JSON Schema usually gives the most reliable
+# well-formed findings. If a local model cannot honour `response_format`
+# reliably, set this to false/off and the reviewer-side structured validation
+# (REVIEWER_OUTPUT_INVALID) still protects the pipeline.
+structured_output = "json_schema" 
 # Set to true only if the local model is genuinely multimodal (e.g. llava).
 vision = false
 

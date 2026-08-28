@@ -219,9 +219,20 @@ Design properties of the real provider:
   capability the endpoint lacks fails explicitly with a capability error; it
   never silently drops a modality (e.g. it never claims to have visually
   reviewed a figure when only text was sent).
-- **Structured output**: when the endpoint supports it, the provider requests
-  JSON mode (`response_format: {"type":"json_object"}`). The reviewer layer
-  then *validates* the reply strictly — see §2.10.
+- **Structured output**: the provider constrains the *transport* format
+  according to the `structured_output` configuration:
+  `false`/`"off"` (no `response_format`), `true`/`"json_object"`
+  (`{"type":"json_object"}`, the historical default), or `"json_schema"`
+  (a full JSON Schema via `{"type":"json_schema", ...}`). In `json_schema`
+  mode the reviewer derives a strict schema from its strongly-typed finding
+  type (numeric `confidence`, required fields) and attaches it to the request;
+  the provider sends it in `response_format`. This is a *transport* concern
+  only — the reviewer layer still *validates* the reply strictly (see §2.10)
+  and never treats structured output as making the model scientifically
+  trustworthy. JSON Schema enforcement != scientific correctness. If the
+  configured mode cannot be honoured (e.g. `json_schema` with no schema, or a
+  mode the endpoint does not support), the provider fails explicitly rather
+  than silently downgrading to unconstrained generation.
 - **Bounded retries**: only transient errors (timeout, connection, `429`, `5xx`)
   are retried, with exponential backoff and a strict cap. Auth, invalid-request,
   config, and schema errors are never retried (no retry storms).

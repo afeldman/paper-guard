@@ -104,6 +104,13 @@ provider = "openai-compatible"
 base_url = "http://localhost:11434/v1"   # Ollama, or any OpenAI-compatible endpoint
 api_key_env = "OPENAI_API_KEY"           # optional; Ollama needs no key
 model = "llama3.1"
+# Structured output only constrains the JSON transport shape; it does NOT make
+# an LLM scientifically trustworthy (scientific validity is still enforced by
+# domain validation, evidence checks, provenance, Judge, and integrity guards).
+#   true / "json_object"  -> {"type":"json_object"} (default)
+#   "json_schema"         -> strict JSON Schema (recommended for Ollama / LM Studio)
+#   false / "off"         -> free-form; reviewer-side validation still enforces JSON
+structured_output = "json_schema"        # true | false | "json_object" | "json_schema"
 ```
 
 *Secrets are never stored in the config.* Only the **name** of an environment

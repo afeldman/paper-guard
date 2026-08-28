@@ -330,7 +330,19 @@ api_key_env = "OPENAI_API_KEY"      # the env var holding the key, never the key
 model = "gpt-4o-mini"
 timeout_seconds = 120
 max_retries = 2
-structured_output = true            # request JSON mode if the endpoint supports it
+# structured_output controls how the endpoint constrains its output at the
+# *transport* layer. It does NOT make an LLM scientifically trustworthy.
+# Scientific validity is enforced separately by domain validation, evidence
+# checks, provenance, Judge, and integrity guards. JSON Schema enforcement
+# != scientific correctness.
+#
+#   false / "off"           -> free-form; reviewer-side validation still enforces JSON
+#   true  / "json_object"   -> {"type":"json_object"} (historical default)
+#   "json_schema"           -> full, strict JSON Schema (LM Studio / Ollama)
+#
+# If the requested mode cannot be honoured, the provider fails explicitly
+# rather than silently downgrading to unconstrained generation.
+structured_output = true            # true | false | "json_object" | "json_schema"
 vision = false                      # set true only when the model truly supports vision
 ```
 
@@ -349,6 +361,21 @@ base_url = "http://localhost:11434/v1"
 model = "llama3.2"
 # api_key_env = "OLLAMA_API_KEY"   # optional for local Ollama
 ```
+
+**LM Studio (local LLM).** LM Studio serves an OpenAI-compatible `/v1` endpoint
+on a local port (default `1234`) and typically needs **no** API key. Point the
+same provider at it and set `structured_output = "json_schema"` — LM Studio
+expects `json_schema` structured output (it rejects `json_object`), and the
+strict schema Paper Guard derives from its finding type (numeric confidence,
+required fields) lets a local model produce conforming findings before the
+domain validation runs. See `configs/paper-guard-ollama.toml` for the same
+pattern.
+
+> Structured output only constrains the JSON transport shape. It does **not**
+> make an LLM, local or hosted, scientifically trustworthy. Scientific validity
+> is still enforced by Paper Guard's domain validation, evidence checks,
+> provenance, Judge, and integrity guards. JSON Schema enforcement ≠ scientific
+> correctness.
 
 Key properties:
 

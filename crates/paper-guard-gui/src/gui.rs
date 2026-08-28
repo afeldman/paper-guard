@@ -155,15 +155,21 @@ pub async fn start_gui(opts: &GuiOptions) -> anyhow::Result<GuiStartup> {
 /// manually).
 fn open_browser(url: &str) {
     #[cfg(target_os = "macos")]
-    let status = std::process::Command::new("open").arg(url).spawn();
+    {
+        let _ = std::process::Command::new("open").arg(url).spawn();
+    }
     #[cfg(target_os = "linux")]
-    let status = std::process::Command::new("xdg-open").arg(url).spawn();
+    {
+        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+    }
     #[cfg(target_os = "windows")]
-    let status = std::process::Command::new("cmd")
-        .args(["/c", "start", "", url])
-        .spawn();
+    {
+        let _ = std::process::Command::new("cmd")
+            .args(["/c", "start", "", url])
+            .spawn();
+    }
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    let status = Ok(std::process::Child::new(std::process::Stdio::null().into()));
-
-    let _ = status;
+    {
+        // Unsupported platform: do nothing (the URL is printed to the terminal).
+    }
 }

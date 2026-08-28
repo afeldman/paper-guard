@@ -44,6 +44,12 @@ model = "gpt-4o"
 seed = 42
 temperature = 0.0
 
+[review]
+# Presentation style for the human-readable report. Purely presentational:
+# neutral / funny / insulting never alter the canonical findings.
+# Priority: CLI `--style` > this config value > `neutral` default.
+style = "neutral"
+
 [judge]
 model = "gpt-4o"
 require_human_approval_for_major = true

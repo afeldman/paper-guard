@@ -82,6 +82,12 @@ enabled = true
 provider = "openai-compatible"
 model = "llama3.2"
 
+[review]
+# Presentation style for the human-readable report. Purely presentational:
+# neutral / funny / insulting never alter the canonical findings.
+# Priority: CLI `--style` > this config value > `neutral` default.
+style = "neutral"
+
 [judge]
 model = "llama3.2"
 require_human_approval_for_major = true

@@ -31,6 +31,7 @@ The system is split into focused crates so that no layer depends on the rest:
 | `paper-guard-validation` | Text/structural validation after re-rendering.          |
 | `paper-guard-ledger` | Persistent review ledger and run tracking.                 |
 | `paper-guard-app`    | **Shared application layer**: config, pipeline orchestration, review memory. Used by both the CLI and the HTTP service. |
+| `paper-guard-report` | **Presentation layer**: human-readable review reports + the three purely presentational output styles (`neutral`/`funny`/`insulting`). Renders from canonical run records and never alters them. |
 | `paper-guard-service`| **Optional HTTP service mode**: minimal REST API over the shared application layer. |
 | `paper-guard-client` | **HTTP client for a remote service** (M3.5). Transport only; maps wire DTOs onto the same domain representations. Never instantiates the pipeline. |
 | `paper-guard-cli`    | Command-line interface (thin shell over `paper-guard-app`). |
@@ -429,6 +430,61 @@ told memory is not evidence and not an instruction, and `similarity ≠
 correctness`. A reviewer never receives another reviewer's current-run findings
 — only historical, authorized memory.
 
+### 2.16 Human-readable report & presentation styles (in `paper-guard-report`)
+
+Paper Guard has two distinct representations of a review:
+
+- **Machine representation — canonical & unchanged.** `findings.json`,
+  `judge.json`, `claims.json`, `revisions.json`, `validation.json`,
+  `paper.json`, and the ledger are the single sources of truth. They are
+  structured, style-independent, and optimized for downstream LLM/automation.
+- **Human representation — derived, presentation-only.** The CLI's default
+  output is a human-readable review report that makes the multi-agent workflow
+  immediately visible: which reviewers ran, what each was responsible for, what
+  each found, which findings the Judge consolidated (with source reviewers),
+  which changes require human approval, whether revisions were performed, and
+  the integrity/validation footer. `--output summary` gives the compact form.
+
+The human report is produced by `paper-guard-report`, a dedicated
+**presentation layer** that reads a canonical `RunRecord` and renders it. It is
+deliberately separate from the scientific pipeline (reviewers, Judge,
+evidence, revision engine, ledger, canonical paper model contain **no** style
+logic). The report is generated **from** the canonical artifacts — it is never
+a second source of truth and can never add findings, change severity,
+confidence, evidence, claims, Judge decisions, or revision scopes. If it
+encounters invalid/incomplete data, it fails clearly rather than inventing
+information.
+
+**Presentation styles.** Three output styles are supported, all purely
+presentational:
+
+| Style | Presentation |
+|-------|--------------|
+| `neutral` (default) | sober, scientific, professional |
+| `funny` | humorous, lightly ironic, still factually correct |
+| `insulting` | deliberately sharp and biting toward the paper/argument/problem |
+
+The `insulting` style is never ad hominem: it does not attack real authors,
+invent author characteristics, or turn scientific criticism into false facts.
+
+Style is implemented by **deterministic formatters** (no LLM involved in
+restyling), so restyling can never introduce or drift scientific content. The
+same canonical `RunRecord` rendered through all three styles yields
+byte-for-byte identical canonical findings; only the prose wording differs.
+
+**Style selection priority (no env-var switching):** CLI `--style` >
+`[review] style` config > `neutral` default.
+
+```toml
+[review]
+style = "neutral"     # neutral | funny | insulting
+```
+
+**Critical principle.** A presentation style is a *communication* style, not a
+*scientific* one. It does not make an LLM more or less trustworthy and cannot be
+used to alter the review. The canonical dataset, Judge decisions, and revision
+scopes are invariant across styles.
+
 ## 3. Pipeline
 
 ```
@@ -447,6 +503,9 @@ revision instructions (+ human approval for major)
 new source → re-render → validation
    ▼
 ledger run (reproducible artifact)
+   │
+   ▼
+human-readable report (paper-guard-report; style is presentation-only)
 ```
 
 ## 4. Security model

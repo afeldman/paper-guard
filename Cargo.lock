@@ -1444,6 +1444,7 @@ dependencies = [
  "paper-guard-llm",
  "paper-guard-parser",
  "paper-guard-renderer",
+ "paper-guard-report",
  "paper-guard-review",
  "paper-guard-service",
  "paper-guard-validation",
@@ -1560,6 +1561,18 @@ dependencies = [
  "paper-guard-parser",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "paper-guard-report"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "paper-guard-core",
+ "paper-guard-ledger",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

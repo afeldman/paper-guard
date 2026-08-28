@@ -74,6 +74,12 @@ enabled = true
 provider = "openai-compatible"
 model = "gpt-4o-mini"
 
+[review]
+# Presentation style for the human-readable report. Purely presentational:
+# neutral / funny / insulting never alter the canonical findings.
+# Priority: CLI `--style` > this config value > `neutral` default.
+style = "neutral"
+
 [judge]
 model = "gpt-4o-mini"
 require_human_approval_for_major = true

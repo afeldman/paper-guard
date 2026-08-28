@@ -129,7 +129,9 @@ deterministically**, so you can try the whole workflow with no API keys.
 ```
 paper-guard init [PATH]                                  # write paper-guard.toml
 paper-guard review <source> [--config PATH] [--approve-all]
+                    [--style {neutral|funny|insulting}] [--output {human|summary}]
 paper-guard run    <source> [--config PATH] [--approve-all]   # full E2E
+                    [--style {neutral|funny|insulting}] [--output {human|summary}]
 paper-guard findings [--config PATH]
 paper-guard judge   <run> [--config PATH]
 paper-guard revise  <run> [--config PATH]
@@ -149,6 +151,114 @@ paper-guard memory search "unsupported causal claim"   # semantic search
 ```
 
 Run the complete workflow with `paper-guard run manuscript/`.
+
+### Human-readable report
+
+The default CLI output of `paper-guard review` / `paper-guard run` is a
+human-readable **review report** that makes the multi-agent workflow visible at
+a glance — like a panel of five independent peer reviewers followed by a senior
+Judge:
+
+```text
+Paper Guard Review
+==================
+
+Paper: phobos.tex
+Run: run-011
+Mode: local
+Provider: OpenAI-compatible
+Model: qwen/qwen3.5-9b
+Review style: neutral
+
+Reviewers
+=========
+Reviewer 1: Scientific Reviewer
+--------------------------------
+Purpose: ...
+Status: completed
+Findings: X
+  - FINDING-001 — Major
+    Problem: ...
+    Confidence: 0.91
+    Evidence: p-1
+    Recommendation: ...
+
+Reviewer 2: Adversarial Reviewer
+...
+Judge
+=====
+...
+Consolidated Findings
+=====================
+...
+Human Approval Required
+=======================
+...
+Validation
+==========
+Paper modified: NO
+Scientific content generated: NO
+...
+Review complete.
+```
+
+The report shows each reviewer's **purpose**, status, and the findings that
+originated from *that specific reviewer* (before the Judge consolidates them),
+then the Judge's consolidated issues with their source reviewer(s), which
+changes require human approval, and the integrity/validation footer. A failed
+or disabled reviewer is shown explicitly, never silently omitted.
+
+**The report is a pure presentation layer.** It is generated from the canonical
+artifacts (`findings.json`, `judge.json`, `claims.json`, the ledger) and never
+becomes a second source of truth. It can never add findings, change severity,
+confidence, evidence, claims, or Judge decisions. The JSON artifacts remain
+canonical and machine-readable; the report is only the human-readable view.
+
+Use `--output summary` for the compact one-line form:
+
+```bash
+paper-guard review paper.tex --output summary
+```
+
+### Review styles
+
+`paper-guard review` / `paper-guard run` accept a `--style` flag controlling how
+the human-readable prose is worded. All three styles are **purely presentational
+communication styles** — they never alter the scientific content:
+
+```bash
+paper-guard review paper.tex --style neutral     # sober, scientific (default)
+paper-guard review paper.tex --style funny       # humorous, lightly ironic
+paper-guard review paper.tex --style insulting   # deliberately sharp, biting
+```
+
+- **`neutral`** (default) is a sober, professional, scientific presentation.
+- **`funny`** adds humour and light irony while staying factually correct.
+- **`insulting`** is deliberately sharp and biting — but only toward the
+  **paper, argument, or problem**, never ad hominem toward real authors. It
+  never invents author characteristics and never turns scientific criticism
+  into false facts.
+
+The styles are implemented as **deterministic formatters** (no LLM is involved
+in restyling), so restyling can never introduce or drift scientific content. In
+all three styles:
+
+- the underlying findings, severity, confidence, evidence, claims, category,
+  recommendation, Judge decisions, and revision scopes are **byte-for-byte
+  identical**;
+- no evidence, claims, references, results, or experiments are ever generated;
+- no finding is added, removed, merged, or reprioritized.
+
+**Priority:** CLI `--style` > `[review] style` config > `neutral` default. The
+style can also be set in the config:
+
+```toml
+[review]
+style = "neutral"     # neutral | funny | insulting
+```
+
+There is **no** implicit style switching via environment variables. An invalid
+style value is rejected with a clear error.
 
 ---
 
@@ -621,6 +731,7 @@ paper-guard/
 │   ├── paper-guard-validation/
 │   ├── paper-guard-ledger/
 │   ├── paper-guard-app/     # shared application layer (config, pipeline, memory)
+│   ├── paper-guard-report/  # presentation layer (human-readable report, styles)
 │   ├── paper-guard-service/ # optional HTTP service mode
 │   ├── paper-guard-client/  # HTTP client for a remote service (transport only)
 │   ├── paper-guard-discovery/ # LAN service discovery (mDNS/DNS-SD, mock)

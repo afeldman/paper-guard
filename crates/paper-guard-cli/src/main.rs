@@ -183,6 +183,16 @@ enum Command {
         #[arg(long)]
         paths: bool,
     },
+    /// Inspect a source document (LaTeX project or PDF) without running a
+    /// review: report how it was parsed, resolved includes, page counts, and
+    /// missing/cyclic structural diagnostics.
+    Inspect {
+        /// The paper source to inspect (e.g. `paper.pdf`, `main.tex`).
+        source: String,
+        /// Path to a `paper-guard.toml` (optional).
+        #[arg(long)]
+        config: Option<String>,
+    },
     /// Print version and platform identity. A stub of `--version` that also
     /// reports the build profile and commit without any review output.
     Info,
@@ -482,6 +492,10 @@ async fn main() -> anyhow::Result<()> {
         Command::Diagnostics { paths } => {
             print_diagnostics(paths);
         }
+        Command::Inspect { source, config } => {
+            let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+            run_inspect(&cfg, &source).await?;
+        }
         Command::Info => {
             println!(
                 "Paper Guard {} ({}, {}) commit={} profile={}",
@@ -730,6 +744,103 @@ fn print_endpoint(ep: &paper_guard_discovery::ServiceEndpoint, status: &str) {
         println!("  Capabilities: {}", ep.capabilities.join(", "));
     }
     let _ = status;
+}
+
+// ---------------------------------------------------------------------------
+// Inspect
+// ---------------------------------------------------------------------------
+
+/// `paper-guard inspect` — report how a source document resolves without
+/// running a review. Never modifies the source; only reads it.
+async fn run_inspect(cfg: &AppConfig, source: &str) -> anyhow::Result<()> {
+    use paper_guard_parser::{format_from_extension, SourceFormat};
+
+    let format = format_from_extension(source);
+    println!("Source: {}", match format {
+        SourceFormat::Latex => "LaTeX".to_string(),
+        SourceFormat::Pdf => "PDF".to_string(),
+        SourceFormat::Typst => "Typst".to_string(),
+        SourceFormat::Docx => "DOCX".to_string(),
+        SourceFormat::SourceDir => "Source directory".to_string(),
+    });
+
+    match format {
+        SourceFormat::Pdf => {
+            let bytes = std::fs::read(source)?;
+            let doc = paper_guard_parser::parse_source_path(source).await?;
+            // Count pages via the parsed document sections.
+            let pages = doc
+                .parsed
+                .document
+                .sections
+                .iter()
+                .map(|s| s.title.clone())
+                .count();
+            let has_text = !doc.parsed.document.sections.is_empty();
+            println!("Pages: {pages}");
+            println!(
+                "Extracted text: {}",
+                if has_text { "available" } else { "unavailable" }
+            );
+            let _ = bytes;
+        }
+        SourceFormat::Latex => {
+            let parsed = paper_guard_parser::parse_source_path(source).await?;
+            let project_files = parsed.project_files;
+            let missing = parsed.missing_includes;
+            let cycles = parsed.include_cycles;
+
+            if project_files.is_empty() {
+                println!("Root: {source}");
+                println!("File type: single-file manuscript");
+                println!("Files resolved: 1");
+            } else {
+                let root_name = std::path::Path::new(source)
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                    .unwrap_or(source);
+                println!("Root: {root_name}");
+                println!("File type: LaTeX project");
+                println!("Files resolved: {}", project_files.len() + 1);
+                println!("Includes: {}", project_files.len());
+                for f in &project_files {
+                    println!("  include: {f}");
+                }
+            }
+            println!("Missing: {}", missing.len());
+            for m in &missing {
+                println!("  {m}");
+            }
+            println!("Cycles: {}", cycles.len());
+            for c in &cycles {
+                println!("  {c}");
+            }
+
+            // If there are structural problems, they are surfaced without
+            // failing the process (consistent with the review pipeline
+            // behaviour).
+            if !missing.is_empty() {
+                println!();
+                println!(
+                    "Notice: {} missing include(s) — reviewers would see an INCOMPLETE manuscript.",
+                    missing.len()
+                );
+            }
+            if !cycles.is_empty() {
+                println!(
+                    "Notice: {} include cycle(s) — resolution stopped deterministically.",
+                    cycles.len()
+                );
+            }
+            let _ = cfg;
+        }
+        _ => {
+            anyhow::bail!(
+                "inspect is not yet supported for this source format; use `review` for LaTeX/PDF"
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Render an optional platform path as a string for diagnostics; never leaks a

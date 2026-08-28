@@ -21,3 +21,5 @@ paper-guard-service.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+tower.workspace = true
+axum.workspace = true

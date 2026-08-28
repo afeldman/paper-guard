@@ -141,7 +141,11 @@ pub(crate) fn build_sections(
             } else {
                 let start_line = pending[0].0;
                 let end_line = pending.last().map(|p| p.0).unwrap_or(start_line);
-                let raw = pending.drain(..).map(|(_, l)| l).collect::<Vec<_>>().join("\n");
+                let raw = pending
+                    .drain(..)
+                    .map(|(_, l)| l)
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 let cleaned = clean_tex(&raw);
                 if cleaned.is_empty() {
                     Vec::new()
@@ -210,10 +214,7 @@ pub(crate) fn build_sections(
 
 /// Finalize: flush the last open section into the output (call once after all
 /// fragments have been processed).
-pub(crate) fn finalize_sections(
-    current: &mut Option<Section>,
-    sections: &mut Vec<Section>,
-) {
+pub(crate) fn finalize_sections(current: &mut Option<Section>, sections: &mut Vec<Section>) {
     if let Some(last) = current.take() {
         sections.push(last);
     }

@@ -31,8 +31,8 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use regex::Regex;
 use paper_guard_core::{CanonicalDocumentBuilder, Document, SourceLocation};
+use regex::Regex;
 
 use crate::latex::{
     build_sections, capture_first, extract_equations, extract_figures, extract_tables,
@@ -137,7 +137,12 @@ pub fn resolve_latex_project(root_tex: &Path) -> anyhow::Result<ResolvedLatexPro
     })?;
     let root_dir = root_abs
         .parent()
-        .ok_or_else(|| anyhow::anyhow!("project root `{}` has no parent directory", root_abs.display()))?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "project root `{}` has no parent directory",
+                root_abs.display()
+            )
+        })?
         .to_path_buf();
     let root_dir_canon = root_dir.canonicalize().unwrap_or_else(|_| root_dir.clone());
 
@@ -206,7 +211,9 @@ impl Resolver {
 
         // Cycle detection: if this file is already on the current include
         // chain, report the cycle and stop recursion here.
-        let canon = abs_path.canonicalize().unwrap_or_else(|_| abs_path.to_path_buf());
+        let canon = abs_path
+            .canonicalize()
+            .unwrap_or_else(|_| abs_path.to_path_buf());
         if self.visited_stack.contains(&canon) {
             let chain: Vec<String> = self
                 .visited_stack
@@ -214,7 +221,8 @@ impl Resolver {
                 .map(|p| relative_to(&self.root_dir, p))
                 .chain(std::iter::once(rel_path.clone()))
                 .collect();
-            self.cycles.push(format!("{} -> {}", chain.join(" -> "), rel_path));
+            self.cycles
+                .push(format!("{} -> {}", chain.join(" -> "), rel_path));
             return Ok(());
         }
         self.visited_stack.push(canon);
@@ -317,7 +325,9 @@ fn resolve_include_path(parent_dir: &Path, target: &str) -> IncludeResolution {
 /// Whether `candidate` (already canonicalized) is strictly inside `root_dir`
 /// (canonical). Equality is allowed for the root itself.
 fn path_is_inside(root_dir: &Path, candidate: &Path) -> bool {
-    let root_canon = root_dir.canonicalize().unwrap_or_else(|_| root_dir.to_path_buf());
+    let root_canon = root_dir
+        .canonicalize()
+        .unwrap_or_else(|_| root_dir.to_path_buf());
     // The candidate must have the root as a component prefix and not be a
     // sibling / ancestor.
     let rel = candidate.strip_prefix(&root_canon);
@@ -415,7 +425,11 @@ pub fn parse_latex_project(project: &ResolvedLatexProject) -> anyhow::Result<Doc
     let mut builder = CanonicalDocumentBuilder::new().source("latex", root_rel);
 
     // Title/abstract come from the root file.
-    let root_text = project.fragments.first().map(|f| f.text.as_str()).unwrap_or_default();
+    let root_text = project
+        .fragments
+        .first()
+        .map(|f| f.text.as_str())
+        .unwrap_or_default();
     if let Some(t) = capture_first(root_text, r"\\title\s*\{([^}]*)\}") {
         builder = builder.title(t);
     }
@@ -525,11 +539,11 @@ mod tests {
                 "\\title{T}\n\\begin{document}\n\\section{Intro}\nIntroduction text.\n\n\
                  \\input{sections/methods}\n\\include{discussion}\n\\end{document}",
             ),
+            ("sections/methods.tex", "\\section{Methods}\nMethod text.\n"),
             (
-                "sections/methods.tex",
-                "\\section{Methods}\nMethod text.\n",
+                "discussion.tex",
+                "\\section{Discussion}\nDiscussion text.\n",
             ),
-            ("discussion.tex", "\\section{Discussion}\nDiscussion text.\n"),
         ]);
         let root = dir.path().join("main.tex");
         let project = resolve_latex_project(&root).unwrap();
@@ -544,10 +558,22 @@ mod tests {
         assert!(paras.iter().any(|p| p.contains("Introduction text")));
         assert!(paras.iter().any(|p| p.contains("Method text")));
         assert!(paras.iter().any(|p| p.contains("Discussion text")));
-        let intro = paras.iter().position(|p| p.contains("Introduction text")).unwrap();
-        let methods = paras.iter().position(|p| p.contains("Method text")).unwrap();
-        let discussion = paras.iter().position(|p| p.contains("Discussion text")).unwrap();
-        assert!(intro < methods && methods < discussion, "document order not preserved");
+        let intro = paras
+            .iter()
+            .position(|p| p.contains("Introduction text"))
+            .unwrap();
+        let methods = paras
+            .iter()
+            .position(|p| p.contains("Method text"))
+            .unwrap();
+        let discussion = paras
+            .iter()
+            .position(|p| p.contains("Discussion text"))
+            .unwrap();
+        assert!(
+            intro < methods && methods < discussion,
+            "document order not preserved"
+        );
     }
 
     #[test]
@@ -600,9 +626,10 @@ mod tests {
 
     #[test]
     fn missing_include_is_reported_not_crashing() {
-        let dir = write_project(&[
-            ("main.tex", "\\begin{document}\n\\section{A}\n\\input{missing_file}\n\\end{document}"),
-        ]);
+        let dir = write_project(&[(
+            "main.tex",
+            "\\begin{document}\n\\section{A}\n\\input{missing_file}\n\\end{document}",
+        )]);
         let project = resolve_latex_project(&dir.path().join("main.tex")).unwrap();
         assert!(!project.missing_includes.is_empty());
         // Parsing still succeeds (only the missing fragment is omitted).
@@ -613,7 +640,10 @@ mod tests {
     #[test]
     fn circular_include_is_detected() {
         let dir = write_project(&[
-            ("main.tex", "\\begin{document}\\section{A}\n\\input{a}\n\\end{document}"),
+            (
+                "main.tex",
+                "\\begin{document}\\section{A}\n\\input{a}\n\\end{document}",
+            ),
             ("a.tex", "text a.\n\\input{b}\n"),
             ("b.tex", "text b.\n\\input{a}\n"), // a -> b -> a cycle
         ]);
@@ -634,7 +664,11 @@ mod tests {
             "\\begin{document}\n\\section{A}\n\\input{sections/in}\n\\end{document}",
         )
         .unwrap();
-        fs::write(root_dir.join("sections/in.tex"), "safe text.\n\\input{../../secret}\n").unwrap();
+        fs::write(
+            root_dir.join("sections/in.tex"),
+            "safe text.\n\\input{../../secret}\n",
+        )
+        .unwrap();
         // A file OUTSIDE the project root, referenced via ../.
         let outside = dir.path().join("secret.tex");
         fs::write(&outside, "TOP SECRET\n\\section{A}\nsecret text\n").unwrap();
@@ -680,7 +714,10 @@ mod tests {
             .unwrap();
             let project = resolve_latex_project(&root_dir.join("main.tex")).unwrap();
             assert!(
-                project.missing_includes.iter().any(|m| m.contains("BLOCKED")),
+                project
+                    .missing_includes
+                    .iter()
+                    .any(|m| m.contains("BLOCKED")),
                 "symlink escape must be blocked: {:#?}",
                 project.missing_includes
             );
@@ -747,7 +784,9 @@ mod tests {
             .count();
         // Exact occurrence count (not exponential): root + shared + shared.
         // The tail paragraph is separate.
-        assert!(count >= 2, "shared fragment should appear at each occurrence");
+        assert!(
+            count >= 2,
+            "shared fragment should appear at each occurrence"
+        );
     }
 }
-

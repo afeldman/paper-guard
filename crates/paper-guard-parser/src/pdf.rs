@@ -18,9 +18,11 @@
 //! * Extraction is bounded (decompression-bomb-safe via lopdf's
 //!   `extract_text_with_limit`) and deterministic.
 
-use lopdf::{Document as PdfDocument};
+use lopdf::Document as PdfDocument;
 
-use paper_guard_core::{CanonicalDocumentBuilder, Document, Paragraph, ParagraphId, Section, SectionId, SourceLocation};
+use paper_guard_core::{
+    CanonicalDocumentBuilder, Document, Paragraph, ParagraphId, Section, SectionId, SourceLocation,
+};
 
 use crate::{ParsedSource, Parser, SourceFormat};
 
@@ -139,11 +141,7 @@ pub fn parse_pdf(source_file: &str, bytes: &[u8]) -> anyhow::Result<Document> {
 }
 
 /// Split page text into canonical paragraphs, preserving page provenance.
-fn split_page_into_paragraphs(
-    text: &str,
-    page_no: u32,
-    source_file: &str,
-) -> Vec<Paragraph> {
+fn split_page_into_paragraphs(text: &str, page_no: u32, source_file: &str) -> Vec<Paragraph> {
     let blocks: Vec<&str> = text
         .split("\n\n")
         .map(|b| b.trim())
@@ -202,7 +200,8 @@ mod tests {
                     Operation::new("ET", vec![]),
                 ],
             };
-            let content_id = doc.add_object(Stream::new(Dictionary::new(), content.encode().unwrap()));
+            let content_id =
+                doc.add_object(Stream::new(Dictionary::new(), content.encode().unwrap()));
             let page_id = doc.add_object(dict(&[
                 ("Type", Object::Name("Page".into())),
                 ("Parent", pages_id.into()),
@@ -216,7 +215,10 @@ mod tests {
         pages.set("Kids", Object::Array(kids));
         pages.set("Count", pages_text.len() as i64);
         pages.set("Resources", resources_id);
-        pages.set("MediaBox", Object::Array(vec![0.into(), 0.into(), 595.into(), 842.into()]));
+        pages.set(
+            "MediaBox",
+            Object::Array(vec![0.into(), 0.into(), 595.into(), 842.into()]),
+        );
         doc.objects.insert(pages_id, Object::Dictionary(pages));
 
         let catalog_id = doc.add_object(dict(&[
@@ -256,7 +258,10 @@ mod tests {
         pages.set("Type", Object::Name("Pages".into()));
         pages.set("Kids", Object::Array(vec![page_id.into()]));
         pages.set("Count", 1);
-        pages.set("MediaBox", Object::Array(vec![0.into(), 0.into(), 595.into(), 842.into()]));
+        pages.set(
+            "MediaBox",
+            Object::Array(vec![0.into(), 0.into(), 595.into(), 842.into()]),
+        );
         doc.objects.insert(pages_id, Object::Dictionary(pages));
         let catalog_id = doc.add_object(dict(&[
             ("Type", Object::Name("Catalog".into())),
@@ -294,8 +299,16 @@ mod tests {
         assert_eq!(doc.sections.len(), 2);
         assert_eq!(doc.sections[0].title, "Page 1");
         assert_eq!(doc.sections[1].title, "Page 2");
-        let p1 = doc.sections[0].paragraphs.iter().find(|p| p.text.contains("First page")).expect("p1");
-        let p2 = doc.sections[1].paragraphs.iter().find(|p| p.text.contains("Second page")).expect("p2");
+        let p1 = doc.sections[0]
+            .paragraphs
+            .iter()
+            .find(|p| p.text.contains("First page"))
+            .expect("p1");
+        let p2 = doc.sections[1]
+            .paragraphs
+            .iter()
+            .find(|p| p.text.contains("Second page"))
+            .expect("p2");
         assert_eq!(p1.location.as_ref().unwrap().page, Some(1));
         assert_eq!(p2.location.as_ref().unwrap().page, Some(2));
     }
@@ -334,7 +347,10 @@ mod tests {
         pages.set("Type", Object::Name("Pages".into()));
         pages.set("Kids", Object::Array(vec![]));
         pages.set("Count", 0);
-        pages.set("MediaBox", Object::Array(vec![0.into(), 0.into(), 595.into(), 842.into()]));
+        pages.set(
+            "MediaBox",
+            Object::Array(vec![0.into(), 0.into(), 595.into(), 842.into()]),
+        );
         doc.objects.insert(pages_id, Object::Dictionary(pages));
         let catalog_id = doc.add_object(dict(&[
             ("Type", Object::Name("Catalog".into())),
@@ -342,7 +358,10 @@ mod tests {
         ]));
         doc.trailer.set("Root", catalog_id);
         // Minimal /Encrypt dictionary triggers encryption detection.
-        doc.trailer.set("Encrypt", dict(&[("Filter", Object::Name("Standard".into()))]));
+        doc.trailer.set(
+            "Encrypt",
+            dict(&[("Filter", Object::Name("Standard".into()))]),
+        );
         let mut out = Vec::new();
         doc.save_to(&mut out).unwrap();
 
@@ -353,4 +372,3 @@ mod tests {
         );
     }
 }
-

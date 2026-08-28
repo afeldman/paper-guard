@@ -226,7 +226,7 @@ jobs:
           echo "artifact=${name}" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: paper-guard-v${{ steps.meta.outputs.version }}-${{ matrix.archive_name }}
           path: paper-guard-v${{ steps.meta.outputs.version }}-${{ matrix.archive_name }}.${{ matrix.archive_ext }}
@@ -254,7 +254,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.28.0
         with:
           scan-type: fs
           scan-ref: .
@@ -289,7 +289,7 @@ jobs:
           cd artifacts
           sha256sum --check SHA256SUMS
       - name: Upload checksums + artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-artifacts
           path: |
@@ -313,7 +313,7 @@ jobs:
           tar --exclude='./target' --exclude='./.git' -czf "paper-guard-${VERSION}.tar.gz" .
           ls -la "paper-guard-${VERSION}.tar.gz"
       - name: Upload source archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: source-tarball
           path: paper-guard-*.tar.gz

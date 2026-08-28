@@ -649,20 +649,38 @@ never on Windows-specific internals. Discovery:
 Explicit `--server` remains the deterministic fallback. Discovery remains
 **off by default**; `discover --force` does a one-shot browse.
 
-### Windows release & CI
+### Cross-platform release & CI
 
 - `.github/workflows/ci.yml` builds, formats, checks, tests, and clippies the
   workspace on `ubuntu-latest`, `macos-latest`, and `windows-latest` (Rust
   `stable`), plus a CLI smoke job with Windows/POSIX branches exercising path-
-  with-spaces config handling and an offline deterministic local review.
+  with-spaces config handling and an offline deterministic local review. It also
+  runs a **Trivy** filesystem scan (`trivy fs .`) on every push and pull request
+  (exit on secrets and actionable HIGH/CRITICAL findings), and a `cargo audit`
+  job. CI uses least-privilege `permissions: contents: read`.
 - `.github/workflows/release.yml` (triggered on an annotated, signed `v*` tag)
-  builds release binaries natively on `windows-latest` (`x86_64-pc-windows-msvc`),
-  `macos-latest` (x86_64 + aarch64), and `ubuntu-latest`, packages each into a
-  versioned ZIP (`paper-guard-vX.Y.Z-<os>-<arch>.zip`) containing the binary,
-  a `QUICKSTART.md`, and the LICENSE, produces a `SHA256SUMS` file, and creates
-  a GitHub Release with the artifacts, the source archive, and release notes.
+  runs an authoritative `validation` job (fmt + test + clippy + release build),
+  then builds release binaries on the supported cross-platform matrix:
+  `aarch64-apple-darwin` (native `macos-14` Apple Silicon), `aarch64-unknown-linux-gnu`
+  (via `cross` containerised build on `ubuntu-latest`), `x86_64-unknown-linux-gnu`
+  (native `ubuntu-latest`), and `x86_64-pc-windows-msvc` (native `windows-latest`,
+  MSVC — never MinGW). macOS Intel (`x86_64-apple-darwin`) is intentionally **not**
+  shipped in this milestone.
+- Each release binary is **smoke-tested** in CI (`--version`, `--help`, `info`,
+  `diagnostics --paths`), embedded with the Git commit via
+  `PAPER_GUARD_BUILD_COMMIT` (provenance), packaged with `QUICKSTART.md` and the
+  LICENSE into a versioned archive named by its Rust target triple
+  (`paper-guard-vX.Y.Z-<target>.zip` or `.tar.gz`), and covered by a generated
+  `SHA256SUMS` that is verified before publishing.
+- A **Trivy security gate** runs before the release is published; the release
+  job only runs after builds, checksums, the Trivy gate, and the source archive
+  all succeed.
 - Windows is built **natively** in CI; cross-compilation from macOS is not the
   authoritative release process (§34).
+- **Dependabot** (`.github/dependabot.yml`) monitors **Cargo** and **GitHub
+  Actions** with weekly, bounded update PRs (security updates remain enabled).
+  Dependency updates must pass the normal CI (fmt, test, clippy, build, Trivy)
+  and are merged only after human review — nothing is auto-merged.
 
 ### Security
 

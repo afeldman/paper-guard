@@ -1,743 +1,753 @@
 # Paper Guard
 
-> **A reproducible, multi-agent scientific review and revision workflow.**
+> Local AI-assisted pre-review for scientific papers.
 
-Paper Guard reads a scientific manuscript, normalizes it into a canonical
-model, runs **several independent LLM-based reviewers** against it, has a
-**Judge agent** consolidate the findings, and a **Revision Agent** apply only
-explicitly approved, strictly-scoped changes — all recorded in a persistent,
-reproducible **Review Ledger**.
+Paper Guard is a reproducible, multi-agent scientific **review** tool that runs
+locally and acts as a **pre-submission quality gate**. It reviews an
+already-written manuscript, identifies potential problems across several
+independent review perspectives, and presents those findings to the researcher
+for human judgment.
 
-It is **not** a writing assistant. It is not an AI-authored scientific
-contribution and it is not a replacement for the authors. It answers the
-question:
+> **Paper Guard does not write scientific papers. It reviews an already-written
+> manuscript, identifies potential problems, and presents those findings to the
+> researcher for human judgment.**
 
-> *"Where will a critical scientific reviewer attack this paper — and can we
-> answer those attacks with the evidence that actually exists?"*
+The language model acts as an **advisor / reviewer**, never as an execution
+authority. All scientific decisions stay with the human researcher. Because a
+local LLM can be used, unpublished manuscripts do not need to leave the local
+environment; the same tool can also target OpenAI-compatible remote endpoints
+when that is appropriate. The architecture is designed so it can later be
+shared by a team over a LAN.
 
-> **Paper Guard does not generate scientific papers. It reviews and
-> quality-controls already-written manuscripts.** The only component that can
-> modify manuscript source is the constrained Revision Engine, and it fails
-> closed.
+```
+Write paper → Paper Guard review → researcher fixes issues → human/peer review → submission
+```
+
+Paper Guard is **not** a replacement for real peer review. It is an early,
+structured pass intended to help researchers reach reviewers who can then
+address substantive scientific feedback instead of catchable basics.
 
 ---
 
-## The one rule that cannot be broken
+## Architecture
 
-> **Paper Guard never invents scientific facts.**
-
-No agent may fabricate results, measurements, experiments, datasets,
-references, citations, figures, table values, or statistical outcomes. When
-information is missing, the system reports an explicit state
-(`INSUFFICIENT_EVIDENCE`, `NOT_VERIFIED`, `UNSUPPORTED`, `CONTRADICTED`); it
-never fills the gap with plausible-but-unreal content. This rule is enforced
-both **conceptually** (the evidence type has no "fabricated" variant) and
-**technically** (revision scopes forbid content-adding changes, and dedicated
-adversarial tests guard the system).
-
----
-
-## Features
-
-- **Canonical Paper Model** — sections, paragraphs, claims, evidence, results,
-  methods, figures, tables, equations, references, citations, and metadata are
-  normalized so reviewers never work on raw text fragments.
-- **Five independent reviewers**
-  1. Scientific Reporter
-  2. Adversarial / Red-Team Reporter
-  3. Evidence / Claim Checker
-  4. Reference Checker
-  5. Figure / Table Reviewer (multimodal-capable)
-- **Judge agent** — merges redundant findings, detects reviewer conflicts,
-  assigns severities/priorities (P0–P3), and decides on revision actions.
-- **Constrained Revision workflow** — revisions are tied to a finding, follow
-  an explicit instruction with `allowed_changes` / `forbidden_changes`, are
-  diffable, logged, and require human approval for major changes.
-- **Re-render + validation** — after a revision the paper is re-rendered and
-  re-validated (lost text, broken references, captions, numbering).
-- **Review Ledger** — reproducible runs (`run-001`, `run-002`, …), each
-  recording input/config hashes, versions, model configuration, reviewer/judge/
-  revision/validation results, and a finding lifecycle across iterations
-  (including regression detection).
-- **Provider-agnostic LLM layer** — OpenAI, Anthropic, OpenAI-compatible, local
-  models, and a deterministic **mock provider** for offline testing.
-- **Multimodal support** — the Figure/Table reviewer can receive images.
-- **Structured JSON logging** via `rust_loguru`, with parallel agent runs
-  attributable per `run_id` / `agent` / `stage`.
-- **Optional LAN discovery** (mDNS/DNS-SD) — provider-independent, off by
-  default; `paper-guard discover` lists & verifies Paper Guard services without
-  ever uploading a manuscript.
-
----
-
-## Installation
-
-### macOS / Linux (from source)
-
-Requires a Rust toolchain (`cargo` ≥ 1.85 recommended).
-
-```bash
-git clone <this-repo> paper-guard
-cd paper-guard
-cargo build --release
-```
-
-The CLI binary is `paper-guard` under `target/release/`.
-
-### Windows (prebuilt, no toolchain)
-
-Download the latest release archive `paper-guard-vX.Y.Z-windows-x86_64.zip`,
-extract it, and run `paper-guard.exe` from PowerShell or `cmd.exe`. No Rust,
-Python, Docker, WSL, or Kubernetes is required. See
-[`docs/windows.md`](docs/windows.md) and [`QUICKSTART.md`](QUICKSTART.md).
-
-Verify the downloaded executable:
-
-```powershell
-Get-FileHash .\paper-guard.exe -Algorithm SHA256   # compare against SHA256SUMS
-```
-
-Release artifacts and `SHA256SUMS` are produced reproducibly by GitHub Actions
-from the tagged Git commit — never hand-copied from a developer machine.
-
----
-
-## Quick start
-
-```bash
-# Initialize a default configuration
-paper-guard init
-
-# Run the full end-to-end workflow on a LaTeX manuscript
-paper-guard run manuscript/main.tex
-
-# Or run the review stage only
-paper-guard review manuscript/main.tex
-
-# Inspect the ledger and reports
-paper-guard ledger
-paper-guard report
-```
-
-With the default (mock) configuration the pipeline runs **fully offline and
-deterministically**, so you can try the whole workflow with no API keys.
-
----
-
-## CLI
-
-```
-paper-guard init [PATH]                                  # write paper-guard.toml
-paper-guard review <source> [--config PATH] [--approve-all]
-                    [--style {neutral|funny|insulting}] [--output {human|summary}]
-paper-guard run    <source> [--config PATH] [--approve-all]   # full E2E
-                    [--style {neutral|funny|insulting}] [--output {human|summary}]
-paper-guard findings [--config PATH]
-paper-guard judge   <run> [--config PATH]
-paper-guard revise  <run> [--config PATH]
-paper-guard validate <run> [--config PATH]
-paper-guard ledger  [--config PATH]
-paper-guard report  [<run>] [--config PATH]
-paper-guard feedback <run> <finding-id> --decision {accept|reject|modified} [--feedback TEXT]
-paper-guard serve   [--config PATH] [--bind ADDR]        # optional HTTP service
-paper-guard health  [--config PATH] [--server URL]       # query a remote service
-paper-guard discover [--config PATH] [--force]           # LAN mDNS/DNS-SD discovery
-paper-guard memory list               # list review-memory units + approval state
-paper-guard memory show <id>          # show full detail of one unit
-paper-guard memory approve-memory <id> [--actor NAME]
-paper-guard memory approve-training <id> [--actor NAME]
-paper-guard memory reject <id> [--actor NAME]
-paper-guard memory search "unsupported causal claim"   # semantic search
-```
-
-Run the complete workflow with `paper-guard run manuscript/`.
-
-### Human-readable report
-
-The default CLI output of `paper-guard review` / `paper-guard run` is a
-human-readable **review report** that makes the multi-agent workflow visible at
-a glance — like a panel of five independent peer reviewers followed by a senior
-Judge:
+Paper Guard parses a manuscript into a **canonical paper model** so reviewers
+work on normalized structure rather than raw text. The core pipeline:
 
 ```text
-Paper Guard Review
-==================
-
-Paper: phobos.tex
-Run: run-011
-Mode: local
-Provider: OpenAI-compatible
-Model: qwen/qwen3.5-9b
-Review style: neutral
-
-Reviewers
-=========
-Reviewer 1: Scientific Reviewer
---------------------------------
-Purpose: ...
-Status: completed
-Findings: X
-  - FINDING-001 — Major
-    Problem: ...
-    Confidence: 0.91
-    Evidence: p-1
-    Recommendation: ...
-
-Reviewer 2: Adversarial Reviewer
-...
-Judge
-=====
-...
-Consolidated Findings
-=====================
-...
-Human Approval Required
-=======================
-...
-Validation
-==========
-Paper modified: NO
-Scientific content generated: NO
-...
-Review complete.
+Manuscript
+   │
+   ▼
+Parser
+   │
+   ▼
+Canonical Paper Model
+   │
+   ├── Scientific Reviewer
+   ├── Adversarial Reviewer
+   ├── Evidence / Claim Checker
+   ├── Reference Checker
+   └── Figure / Table Reviewer
+            │
+            ▼
+          Judge
+            │
+            ▼
+   Prioritized Findings
+            │
+            ▼
+      Human Approval
+            │
+            ▼
+      Optional Revision
 ```
 
-The report shows each reviewer's **purpose**, status, and the findings that
-originated from *that specific reviewer* (before the Judge consolidates them),
-then the Judge's consolidated issues with their source reviewer(s), which
-changes require human approval, and the integrity/validation footer. A failed
-or disabled reviewer is shown explicitly, never silently omitted.
+Each reviewer has its own independent role:
 
-**The report is a pure presentation layer.** It is generated from the canonical
-artifacts (`findings.json`, `judge.json`, `claims.json`, the ledger) and never
-becomes a second source of truth. It can never add findings, change severity,
-confidence, evidence, claims, or Judge decisions. The JSON artifacts remain
-canonical and machine-readable; the report is only the human-readable view.
+- **Scientific Reviewer** — examines scientific correctness, methodology,
+  assumptions, interpretation, logical consistency, and scientific validity.
+- **Adversarial Reviewer** — acts as a hostile peer reviewer searching for
+  weaknesses, unsupported assumptions, contradictions, ambiguities, missing
+  controls, and likely reviewer attacks.
+- **Evidence / Claim Checker** — checks the relationship between
+  Claim → Evidence → Result and identifies claims that are unsupported,
+  insufficiently supported, or not adequately connected to the presented
+  evidence.
+- **Reference Checker** — checks citations, references, citation placement,
+  citation-to-claim relationships, and whether the cited literature appears
+  appropriate for the claim.
+- **Figure / Table Reviewer** — checks figures, tables, captions, labels, units,
+  consistency with the text, readability, and whether visual material
+  adequately supports the scientific argument.
 
-Use `--output summary` for the compact one-line form:
-
-```bash
-paper-guard review paper.tex --output summary
-```
-
-### Review styles
-
-`paper-guard review` / `paper-guard run` accept a `--style` flag controlling how
-the human-readable prose is worded. All three styles are **purely presentational
-communication styles** — they never alter the scientific content:
-
-```bash
-paper-guard review paper.tex --style neutral     # sober, scientific (default)
-paper-guard review paper.tex --style funny       # humorous, lightly ironic
-paper-guard review paper.tex --style insulting   # deliberately sharp, biting
-```
-
-- **`neutral`** (default) is a sober, professional, scientific presentation.
-- **`funny`** adds humour and light irony while staying factually correct.
-- **`insulting`** is deliberately sharp and biting — but only toward the
-  **paper, argument, or problem**, never ad hominem toward real authors. It
-  never invents author characteristics and never turns scientific criticism
-  into false facts.
-
-The styles are implemented as **deterministic formatters** (no LLM is involved
-in restyling), so restyling can never introduce or drift scientific content. In
-all three styles:
-
-- the underlying findings, severity, confidence, evidence, claims, category,
-  recommendation, Judge decisions, and revision scopes are **byte-for-byte
-  identical**;
-- no evidence, claims, references, results, or experiments are ever generated;
-- no finding is added, removed, merged, or reprioritized.
-
-**Priority:** CLI `--style` > `[review] style` config > `neutral` default. The
-style can also be set in the config:
-
-```toml
-[review]
-style = "neutral"     # neutral | funny | insulting
-```
-
-There is **no** implicit style switching via environment variables. An invalid
-style value is rejected with a clear error.
+Reviewers run **independently** and in parallel on the same canonical model.
+Their individual findings are then consolidated by the **Judge**, which merges
+redundant findings, detects reviewer conflicts, assigns severities and
+priorities, and decides on revision actions.
 
 ---
 
-## Service mode
+## Local-first LLM support
 
-`paper-guard serve` starts an optional HTTP service that calls the **same**
-application pipeline as the CLI (no duplicate review logic). It binds to
-**loopback only** by default and refuses unauthenticated external exposure
-unless you explicitly enable it.
-
-```
-GET  /health                        → service status
-POST /reviews                       → run the shared review pipeline
-GET  /reviews/{run_id}              → review status/result
-GET  /reviews/{run_id}/findings     → review findings
-POST /reviews/{run_id}/feedback     → record human ACCEPT/REJECT/MODIFY
-GET  /memory                        → list memory units + approval state
-GET  /discovery/metadata              → service identity for LAN discovery
-GET  /memory/{id}                   → fetch a memory unit
-POST /memory/{id}/approve           → explicit approval (→ retrievable context)
-POST /memory/{id}/reject            → explicit rejection
-```
-
-```bash
-paper-guard serve --config configs/paper-guard.toml   # listens on 127.0.0.1:8080
-```
-
-Responses are stable JSON (API DTOs), decoupled from internal Rust types
-(M3 §8). Authentication/authorization is out of scope for M3 and documented as
-a limitation; the loopback-only bind is the safeguard. Uploaded manuscripts are
-treated as untrusted data and never logged.
-
-## LAN service discovery (mDNS / DNS-SD)
-
-Paper Guard has provider-independent, **optional** LAN discovery so a service
-running in a local cluster can be found by machines on the same network without
-entering a node IP, Service/NodePort, or Ingress address.
-
-- The discovery abstraction is a [`ServiceDiscovery`] trait (implemented by an
-  mDNS/DNS-SD backend and a deterministic mock). No Avahi/mDNS logic lives in
-  the Paper Guard application.
-- **Discovery is off by default.** The client never probes the network
-  implicitly and never sends a manuscript to a found service automatically.
-- `paper-guard discover` lists and verifies Paper Guard services found on the
-  LAN, then exits — it **never uploads** anything.
-
-### Enabling discovery
-
-```toml
-[discovery]
-enabled = true
-mode = "manual"     # or "auto"
-timeout_ms = 3000   # optional
-# preferred_service = "paper-guard.lab.local"   # explicit selection in Auto
-```
-
-- `off` (default): discovery is disabled; `paper-guard discover` explains how to
-  enable it.
-- `manual`: discovery runs only when explicitly invoked (`paper-guard discover`).
-  It lists/verifies services but never selects or uploads anything.
-- `auto`: discovery may run when explicitly requested and, with a configured
-  `preferred_service`, may select a single verified service — but only with
-  explicit user confirmation before any manuscript is transmitted.
-
-Use `paper-guard discover --force` to run a one-off manual browse even when
-discovery is disabled in the config.
-
-Example output:
-
-```
-Searching local network for Paper Guard services…
-Found:
-
-  Name:     paper-guard
-  Host:     paper-guard.local
-  Address:  192.168.1.50
-  Port:     8080
-  Version:  0.5.0
-  Status:   healthy
-
-Summary: 1 healthy, 0 incompatible, 0 unreachable. Discovery never uploads a
-manuscript.
-```
-
-If nothing is found, it prints `No Paper Guard services found on the local
-network.` and exits 0 (not an error).
-
-### Multiple services
-
-When several Paper Guard services are reachable, the client lists **all** of
-them. It never picks "first response wins". Automatic selection requires an
-explicit `[discovery] preferred_service` that matches exactly one verified
-candidate.
-
-### Security model
-
-> **Discovery ≠ authorization.** Finding a Paper Guard service never authorises
-> an upload. Paper Guard **never** sends a manuscript to a discovered service
-> unless remote execution has been explicitly selected.
-
-Discovered endpoints are treated as **untrusted input**: records are validated
-and sanitised (a hostile record cannot inject a scheme, port, path, or
-credentials into the constructed URL, and cannot cause command execution,
-filesystem access, or secret disclosure). Candidates are cross-checked through
-`GET /health`; a service that does not self-identify as Paper Guard is rejected,
-and obvious version incompatibilities are reported as
-`INCOMPATIBLE_SERVICE_VERSION` rather than proceeding.
-
-Discovery never logs manuscript contents, API keys, or bearer tokens.
-
-### Network assumptions
-
-mDNS operates within the local multicast domain. It may not work across routed
-networks, VPNs, VLAN boundaries, Wi-Fi client isolation, firewalls blocking
-multicast, or Kubernetes CNI boundaries. Paper Guard fails gracefully when mDNS
-is unavailable (an empty result is not an error). See the Helm chart for the
-optional, separately-scoped mDNS publisher (`discovery.publisher`).
-
----
-
-## Configuration
-
-Configuration lives in a versioned `paper-guard.toml`. Reviewers are assigned
-providers and models independently:
-
-```toml
-[project]
-name = "my-paper"
-
-[reviewers.scientific]
-enabled = true
-provider = "openai"
-model = "gpt-4o"
-
-[reviewers.adversarial]
-enabled = true
-provider = "anthropic"
-model = "claude-sonnet-4"
-
-[reviewers.evidence]
-enabled = true
-provider = "local"
-model = "..."
-
-[judge]
-model = "..."
-
-[revision]
-require_human_approval_for_major = true
-```
-
-See `configs/paper-guard.toml` (deterministic/mock) and
-`configs/paper-guard-openai.toml` (LLM providers).
-
----
-
-## LLM providers
-
-The `paper-guard-llm` crate exposes a single async `LlmProvider` trait.
-Reviewers and the Judge depend only on that abstraction — never on a concrete
-vendor SDK.
-
-Production backends connect through **one** OpenAI-compatible provider whose
-endpoint is configuration-driven, so switching backends is a *config change,
-not a code change*:
-
-- **OpenAI** → `base_url = "https://api.openai.com/v1"`
-- **Mammoth.ai** → `base_url = "<Mammoth.ai OpenAI-compatible endpoint>"`
-- **Local server** → `base_url = "http://localhost:8080/v1"`
-- **any other compatible endpoint** → its base URL
+Paper Guard intentionally has **no separate LM Studio provider and no separate
+Ollama provider**. Both — like OpenAI, Mammoth.ai, or any local server — are
+reached through a single generic provider:
 
 ```toml
 [llm]
-provider = "openai-compatible"      # or "mock" (the default)
-
-[providers.openai-compatible]
-base_url = "https://api.openai.com/v1"
-api_key_env = "OPENAI_API_KEY"      # the env var holding the key, never the key
-model = "gpt-4o-mini"
-timeout_seconds = 120
-max_retries = 2
-# structured_output controls how the endpoint constrains its output at the
-# *transport* layer. It does NOT make an LLM scientifically trustworthy.
-# Scientific validity is enforced separately by domain validation, evidence
-# checks, provenance, Judge, and integrity guards. JSON Schema enforcement
-# != scientific correctness.
-#
-#   false / "off"           -> free-form; reviewer-side validation still enforces JSON
-#   true  / "json_object"   -> {"type":"json_object"} (historical default)
-#   "json_schema"           -> full, strict JSON Schema (LM Studio / Ollama)
-#
-# If the requested mode cannot be honoured, the provider fails explicitly
-# rather than silently downgrading to unconstrained generation.
-structured_output = true            # true | false | "json_object" | "json_schema"
-vision = false                      # set true only when the model truly supports vision
+provider = "openai-compatible"
 ```
 
-**Ollama (local LLM).** Ollama exposes an OpenAI-compatible `/v1` endpoint, so a
-local model uses the **same** provider — only `base_url` (and optionally
-`api_key_env`) differ. `api_key_env` is **optional**: when absent/empty, requests
-are sent without an Authorization header (local Ollama typically needs no key).
-See `configs/paper-guard-ollama.toml`:
+This works because LM Studio and Ollama both expose **OpenAI-compatible APIs**.
+Switching backends is therefore a configuration change, never a code change.
+
+### Structured output modes
+
+The provider supports several structured-output modes (configured per
+endpoint under `[providers.openai-compatible]`):
+
+```toml
+structured_output = false
+structured_output = true
+structured_output = "json_object"
+structured_output = "json_schema"
+```
+
+| Value | Meaning |
+| ----- | ------- |
+| `false` | Free-form provider response. Reviewer-side validation remains authoritative and still enforces the JSON/finding shape. |
+| `true` / `"json_object"` | Historical "JSON object" hint mode. |
+| `"json_schema"` | Strict JSON Schema response format. **Recommended** for local models such as LM Studio/Qwen and compatible Ollama setups. |
+
+**Regardless of the provider output mode, reviewer-side schema/domain
+validation remains mandatory.** Structured output constrains the JSON
+*transport* shape; it does **not** make an LLM scientifically trustworthy.
+Scientific validity is enforced separately by domain validation, evidence
+checks, provenance, the Judge, and integrity guards.
+
+---
+
+## LM Studio local example
+
+A practical configuration for a local LM Studio server:
 
 ```toml
 [llm]
 provider = "openai-compatible"
 
 [providers.openai-compatible]
-base_url = "http://localhost:11434/v1"
-model = "llama3.2"
-# api_key_env = "OLLAMA_API_KEY"   # optional for local Ollama
+base_url = "http://localhost:1234/v1"
+api_key_env = ""
+model = "qwen/qwen3.5-9b"
+structured_output = "json_schema"
+vision = false
 ```
 
-**LM Studio (local LLM).** LM Studio serves an OpenAI-compatible `/v1` endpoint
-on a local port (default `1234`) and typically needs **no** API key. Point the
-same provider at it and set `structured_output = "json_schema"` — LM Studio
-expects `json_schema` structured output (it rejects `json_object`), and the
-strict schema Paper Guard derives from its finding type (numeric confidence,
-required fields) lets a local model produce conforming findings before the
-domain validation runs. See `configs/paper-guard-ollama.toml` for the same
-pattern.
+- `api_key_env = ""` — local LM Studio normally needs **no API key**; when
+  empty, requests are sent without an `Authorization` header.
+- `structured_output = "json_schema"` — strict JSON Schema output, recommended
+  for local models that support it.
+- `vision = false` — set to `true` only if the local model is genuinely
+  multimodal.
 
-> Structured output only constrains the JSON transport shape. It does **not**
-> make an LLM, local or hosted, scientifically trustworthy. Scientific validity
-> is still enforced by Paper Guard's domain validation, evidence checks,
-> provenance, Judge, and integrity guards. JSON Schema enforcement ≠ scientific
-> correctness.
+Confirm LM Studio is serving before reviewing:
 
-Key properties:
+```bash
+curl http://localhost:1234/v1/models
+```
 
-- **Secrets never touch this repo.** The API key is read from the environment
-  variable named by `api_key_env` at provider construction; it is never stored
-  in a committed config, a ledger, a log, or a test fixture.
-- **Strict structured output.** Reviewer output is validated before it becomes
-  domain findings. Malformed or unparseable replies produce a `REVIEWER_OUTPUT_INVALID`
-  failure (a failed-agent record) — never a silent best-effort parse that could
-  invent or misinterpret findings.
-- **Bounded, conservative retries.** Only transient errors (timeout, connection,
-  rate-limit `429`, provider `5xx`) are retried, with exponential backoff and a
-  strict cap. Auth, invalid-request, config, and schema errors are never retried.
-- **Capability model.** A provider declares what it actually supports
-  (`TEXT` / `STRUCTURED_OUTPUT` / `VISION`). A reviewer that needs a capability
-  the endpoint lacks fails explicitly rather than pretending the modality was
-  reviewed.
-- **Provider-agnostic usage accounting.** Per-agent token usage is recorded in
-  the ledger as generic `provider_usage` metadata, never coupling the ledger to
-  a vendor.
-- **`mock` remains the default**, giving fully offline, deterministic runs for
-  CI, unit/integration tests, and local development. `paper-guard run manuscript.tex`
-  works with no API key.
+Run the review against that configuration (source build):
 
-See `configs/paper-guard.toml` (deterministic/mock) and
-`configs/paper-guard-openai.toml` (the real provider).
+```bash
+paper-guard review ./phobos.tex \
+  --config ./paper-guard-lmstudio.toml
+```
+
+If you downloaded the **release binary** instead (see
+[Installation](#installation--binaries)), invoke it the same way:
+
+```bash
+./paper-guard review ./phobos.tex --config ./paper-guard-lmstudio.toml
+```
+
+A **real local end-to-end run** has been performed successfully with:
+
+- Qwen 3.5 9B
+- LM Studio
+- the OpenAI-compatible API
+- JSON Schema structured output
+- all five reviewers
+- the Judge
+- findings persisted to the ledger
+- the manuscript left **unchanged**
+
+That run is a demonstration of the workflow. The resulting findings are
+**model-generated review findings that require your scientific judgment** — they
+are not automatically correct and are not a substitute for human peer review.
 
 ---
 
-## Review Memory & Qdrant
+## Ollama / Windows
 
-> **Review Memory is retrieval-based contextual learning. It does not modify
-> model weights.**
-
-A human reviewer records `ACCEPT` / `REJECT` / `MODIFY` on an AI finding
-(service `POST /reviews/{id}/feedback` or CLI `feedback`). Each unit is stored
-**private by default** and only becomes retrievable as context
-(`MEMORY_APPROVED`) or exportable to a versioned training dataset
-(`TRAINING_APPROVED`) through explicit, audited consent. **A paper is never
-used for anything beyond its own review automatically** — nothing is submitted
-for training merely because it was reviewed. Paper Guard does not implement
-LoRA / QLoRA / fine-tuning / weight updates (those are future milestones).
-
-M4 turns this into a **team review-memory system**: approved human-validated
-review experience can be embedded, stored, retrieved by semantic similarity,
-and injected into a future review as *untrusted guidance only*.
-
-```toml
-[memory]
-backend = "none"                 # standalone default: memory off (file | qdrant)
-qdrant_url = "http://localhost:6333"
-collection = "review_memory"
-require_approval = true          # nothing is promoted without explicit consent
-enabled = false                  # M4: disabled by default, so runs are unchanged
-mode = "off"                     # off | read_only | write | read_write
-top_k = 5                        # max retrieved memory entries per review
-min_similarity = 0.75            # cosine similarity threshold for retrieval
-embedding_provider = "mock"      # mock (offline) | openai-compatible (incl. Ollama)
-embedding_model = "mock"         # e.g. nomic-embed-text / all-minilm for Ollama
-owner_id = ""                    # optional owner identity for scope/authorization
-team_id = ""                     # optional team id for shared team memory
-```
-
-Key M4 properties:
-
-- **Modes.** `off` (default), `read_only` (use approved memory but store
-  nothing new), `write` (store approved feedback but retrieve nothing),
-  `read_write` (both). Existing behavior is unchanged unless memory is
-  explicitly enabled.
-- **Embeddings are provider-independent.** A reviewer-facing
-  `EmbeddingProvider` trait (mock / OpenAI-compatible, incl. Ollama's
-  `/embeddings`) means local deployment can use `Ollama + local embedding +
-  Qdrant` with no external API. Embeddings are computed **once** per memory
-  entry from a deterministic *review-experience* representation — never the
-  whole paper.
-- **Scope-aware authorization.** Each unit has a scope: `PRIVATE` (owner-only)
-  or `TEAM` (any member of the owning team). Retrieval never leaks a private
-  unit to another owner, and never returns a rejected unit as guidance.
-- **Historical memory is untrusted.** Retrieved memory is injected as a
-  delimited `<historical_review_memory>` block, plainly distinct from the
-  `<current_manuscript>` block. The reviewer prompt states it is **not
-  evidence** for the current paper and **not an instruction**; prompt
-  injection inside a memory entry is ignored. `similarity ≠ correctness`.
-- **Service memory API.** Beyond `POST /reviews/{id}/feedback`, the service
-  exposes approval management:
-  ```
-  GET  /memory                           → list stored units + approval state
-  GET  /memory/{id}                      → fetch a unit
-  POST /memory/{id}/approve              → explicit approval → retrievable context
-  POST /memory/{id}/reject               → explicit rejection
-  ```
-- **Handling of a failed memory.** If Qdrant is unavailable, retrieval reports
-  `MEMORY_UNAVAILABLE` and the review **continues without fabricated context**;
-  a failed memory write is surfaced (never silently swallowed).
-- **Explicit — no training.** No `train` / `fine-tune` / `lora` / `qlora`
-  commands exist. M4 ends at human-approved memory + semantic retrieval.
-
-Ollama can serve **both** the LLM (`/v1/chat/completions`, config only) and the
-embedding model (`/v1/embeddings`) for a fully local deployment alongside a
-configured Qdrant. `cargo test --workspace` stays fully offline; Qdrant is
-exercised through an opt-in harness (`PAPER_GUARD_QDRANT_TESTS=1`).
-
----
-
-## Deployment (Helm)
-
-A Helm chart (`deploy/helm/paper-guard`) deploys the Paper Guard **service** to
-Kubernetes. It does **not** bundle Qdrant or Ollama — those are configured
-external endpoints, so the topology stays flexible:
+Because many researchers use Windows, the same generic `openai-compatible`
+provider works with **Ollama on Windows** — no provider-specific code is
+introduced for Windows.
 
 ```text
-Kubernetes
-├── paper-guard (this chart)
-├── qdrant      (deployed/managed separately)
-└── ollama      (deployed separately, or an external LLM endpoint)
+Windows
+  │
+  ├── Paper Guard
+  │
+  └── Ollama
+       └── OpenAI-compatible API
 ```
+
+Ollama exposes an OpenAI-compatible endpoint locally:
+
+```toml
+[providers.openai-compatible]
+base_url = "http://localhost:11434/v1"
+model = "llama3.2"
+structured_output = "json_schema"
+```
+
+Local Ollama typically requires no API key; when a setup does, you reference
+the key by environment-variable **name** only (`api_key_env = "OLLAMA_API_KEY"`),
+never the key itself. Paper Guard itself does not require any Ollama-specific
+integration — it sees an ordinary OpenAI-compatible server.
+
+The project also publishes a **native Windows executable** (`paper-guard.exe`)
+as part of its cross-platform release, so no Rust or other toolchain is needed
+on a Windows researcher machine. No administrator privileges are required for
+normal operation and Paper Guard does not modify the firewall automatically.
+See [`docs/windows.md`](docs/windows.md) for the detailed Windows guide.
+
+---
+
+## Installation / binaries
+
+Paper Guard ships **self-contained release artifacts** for the supported
+platforms:
+
+| Platform       | Architecture | Release archive                                 |
+| -------------- | ------------ | ----------------------------------------------- |
+| macOS          | ARM64        | `paper-guard-vX.Y.Z-aarch64-apple-darwin.zip`   |
+| Linux          | ARM64        | `paper-guard-vX.Y.Z-aarch64-unknown-linux-gnu.tar.gz` |
+| Linux          | x86_64       | `paper-guard-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz` |
+| Windows        | x86_64       | `paper-guard-vX.Y.Z-x86_64-pc-windows-msvc.zip` |
+
+Each archive contains the binary (`paper-guard` / `paper-guard.exe`),
+`QUICKSTART.md`, and `LICENSE`. macOS Intel is intentionally not shipped in
+this milestone.
+
+The intended workflow is:
+
+```text
+download archive
+→ extract
+→ run paper-guard
+```
+
+No Rust, Docker, Kubernetes, or Python is required to use a prebuilt binary.
+To build from source (macOS / Linux), a recent Rust toolchain is sufficient:
 
 ```bash
-helm install paper-guard deploy/helm/paper-guard \
-  --set llm.endpoint=https://api.openai.com/v1 \
-  --set llm.model=gpt-4o-mini \
-  --set llm.apiKeySecretName=paper-guard-api-key
-kubectl create secret generic paper-guard-api-key \
-  --from-literal=api-key='sk-...' \
-  --dry-run=client -o yaml | kubectl apply -f -
+git clone https://github.com/afeldman/paper-guard.git
+cd paper-guard
+cargo build --release
+./target/release/paper-guard --help
 ```
 
-API keys live in a Kubernetes Secret referenced by name — **never** in
-`values.yaml`. Persistent storage for artifacts/ledger is configurable (PVC).
-See `deploy/helm/paper-guard/README.md` for the full parameter table.
+Release archives are produced by **CI from the tagged Git commit** and include
+a `SHA256SUMS` file covering every archive. Verify the downloaded archive:
+
+- **Linux**: `sha256sum -c SHA256SUMS`
+- **macOS**: `shasum -a 256 paper-guard-vX.Y.Z-aarch64-apple-darwin.zip`
+- **Windows**: `Get-FileHash .\paper-guard-vX.Y.Z-x86_64-pc-windows-msvc.zip -Algorithm SHA256`
+
+Builds carry traceable build metadata — `paper-guard info` reports version,
+platform triple, Git commit (via `PAPER_GUARD_BUILD_COMMIT` embedded by CI), and
+build profile. (Homebrew, winget, scoop, and similar package managers are
+**not** currently supported.)
 
 ---
 
-## Scientific integrity in practice
+## Basic CLI workflow
 
-- The **Evidence / Claim Checker** walks `Claim → Evidence → Result →
-  Figure/Table → Reference` and classifies support; it never fabricates.
-- The **Reference Checker** reports `NOT_VERIFIED` for references it cannot
-  confirm against an authoritative source; it never asserts existence.
-- The **Revision engine** structurally **forbids** adding results, experiments,
-  references, measurements, or inventing data — regardless of the prompt. It
-  **fails closed**: if a safe edit cannot be proven, nothing is auto-applied
-  and the action is surfaced for the author instead.
-- **Prompt injection** is defended: paper content is treated as untrusted
-  input and cannot override system rules. Every reviewer's *delivered* system
-  prompt carries the integrity preamble.
-- **Provenance** is tracked end-to-end (`AUTHOR_CONTENT`, `PARSER_OUTPUT`,
-  `REVIEWER_OUTPUT`, `JUDGE_OUTPUT`, `REVISION_INSTRUCTION`,
-  `REVISION_OUTPUT`, `VALIDATION_OUTPUT`), so an applied edit is always tagged
-  as machine-produced and can never be mistaken for author content.
-- Reviewer outputs are independent inputs to a single Judge; a failed or
-  panicked reviewer is recorded under its **own** agent identity.
-- **Adversarial tests** (see `crates/paper-guard-review/tests/adversarial.rs`)
-  verify all of the above, including reviewer-disagreement-never-collapses-to-
-  `SUPPORTED`, revision escalation rejection, and injection in every manuscript
-  location (body, caption, table, reference, metadata).
+`paper-guard --help` lists all commands. The core ones for a local researcher:
 
----
+| Command | What it does | Reads manuscript? | Modifies manuscript? |
+| ------- | ------------ | ----------------- | -------------------- |
+| `paper-guard review <SOURCE>` | Parse + parallel review + Judge + ledger. Default, read/review only. | Yes | No |
+| `paper-guard run <SOURCE>` | Full workflow: review + judge + revision + render + validate. Revisions require approval. | Yes | Only with explicit `--approve-all` |
+| `paper-guard info` | Print version, platform, build profile, config/data dirs. | No | No |
+| `paper-guard diagnostics --paths` | Print resolved config/data/cache/log directories. Never prints secrets or manuscript content. | No | No |
+| `paper-guard discover` | Find Paper Guard services on the LAN (mDNS/DNS-SD). Never uploads. | No | No |
+| `paper-guard findings` | List findings from the latest run. | No | No |
+| `paper-guard ledger` | Show the review ledger (runs + status). | No | No |
+| `paper-guard report [RUN]` | Emit a summary report for a run (defaults to latest). | No | No |
+| `paper-guard feedback <RUN> <FINDING> --decision <accept\|reject\|modified>` | Record a human decision on a finding (stored as a private Review Memory candidate). | No | No |
+| `paper-guard memory …` | List / show / approve / reject / search approved review memory. | No | No |
 
-## Review ledger & reproducibility
-
-Each run stores:
-input hash, source format, parser version, Paper Guard version,
-configuration hash, model configuration, prompt version, reviewer results,
-judge results, revision results, validation results, and per-agent provider
-usage metadata (tokens), plus a timestamp. LLM outputs are recorded as review
-artifacts. Finding lifecycle states
-(`OPEN` → `ACKNOWLEDGED` → `APPROVED` → `REVISED` → `RESOLVED` / `REJECTED`,
-and `REGRESSED`) let the system detect when a previously fixed problem is
-reintroduced (see `crates/paper-guard-ledger` tests).
-
-Because a real LLM is non-deterministic, Paper Guard never claims such a run
-is bit-for-bit reproducible. Instead it records enough to audit the run —
-`input_hash`, `paper_guard_version`, `configuration_hash`, provider & model,
-model parameters, prompt version, per-reviewer configuration, timestamp —
-i.e. **`AUDITABLE_NONDETERMINISTIC`** mode. The mock provider remains fully
-deterministic for offline regression testing.
-
-### Live (real provider) testing
-
-The normal test suite is **fully offline**; no test makes a real API call.
-Provider behaviour is exercised against a local mock HTTP server
-(`crates/paper-guard-llm/tests/openai_compatible.rs`).
-
-An **optional** live end-to-end harness
-(`crates/paper-guard-review/tests/live_provider.rs`) runs one real reviewer
-against a real endpoint. It is opt-in and must never run in CI:
+Minimal examples:
 
 ```bash
-PAPER_GUARD_LIVE_TESTS=1 \
-  OPENAI_API_KEY=$(cat ./my-secret-key) \
-  cargo test -p paper-guard-review --test live_provider -- --ignored
+paper-guard review paper.tex
+paper-guard run manuscript/main.tex
+paper-guard info
+paper-guard diagnostics --paths
+paper-guard discover        # list-only; explains how to enable discovery
+paper-guard findings
+paper-guard feedback run-001 PG-0001 --decision accept --feedback "Looks correct."
 ```
 
-It loads the sample paper, parses it, runs the adversarial reviewer, validates
-the structured output, verifies provenance, stores no secret, writes a
-temporary ledger, and cleans up.
+`review` reads the manuscript but does not modify it. `run` only applies
+revisions when you explicitly approve them (typically interactively, or via
+the explicit `--approve-all` flag). See [Review findings and human
+approval](#11-review-findings-and-human-approval).
 
 ---
 
-## Security model
+## Human-readable output
 
-Treat paper contents (text, captions, references, tables, metadata, OCR
-output) as **untrusted input**. There are no hidden prompt instructions from
-the paper that can override the system's integrity rules. Every change must
-(1) map to a finding, (2) follow an explicit revision instruction, (3) be
-diffable, (4) be logged, and (5) be tagged with its provenance. No silent
-changes.
+The default on-screen output is a **human-readable report** that makes the
+multi-agent workflow visible:
 
-Because Paper Guard handles unpublished scientific manuscripts, discovering a
-remote service on the LAN is **never** permission to upload one. Discovery only
-lists and verifies that a Paper Guard service exists; the client requires an
-explicit remote-mode selection before any manuscript leaves the machine.
+```text
+Paper Guard Review
 
----
+Reviewer 1: Scientific Reviewer
+Purpose: ...
 
-## Development
+Reviewer 2: Adversarial Reviewer
+Purpose: ...
+
+Reviewer 3: Evidence / Claim Checker
+Purpose: ...
+
+Reviewer 4: Reference Checker
+Purpose: ...
+
+Reviewer 5: Figure / Table Reviewer
+Purpose: ...
+
+Judge
+...
+
+Consolidated Findings
+...
+```
+
+This is useful because a researcher immediately sees *which* reviewers ran,
+*what* each found, which findings were accepted / rejected / consolidated by
+the Judge, and which issues require human approval — without reading raw JSON.
+The report is a **presentation layer** generated from the canonical run record;
+it introduces no new findings, and it cannot change severity, confidence,
+evidence, claims, or Judge decisions.
+
+Three presentation styles adjust the report's wording:
 
 ```bash
-cargo build --workspace
-cargo test --workspace        # unit + integration + adversarial integrity tests
-cargo clippy --workspace
+paper-guard review paper.tex --style neutral
+paper-guard review paper.tex --style funny
+paper-guard review paper.tex --style insulting
 ```
 
-Repository layout:
+- `neutral` is the **default** (and falls back to the `[review] style` config
+  value, then `neutral`).
+- `funny` and `insulting` are **presentation styles only**. They cannot change
+  findings, severity, confidence, evidence, claims, Judge decisions, or
+  revision scope.
+- The `insulting` style criticizes the **paper / argument**, never the author
+  personally.
+
+---
+
+## JSON output / machine-readable workflow
+
+JSON support is deliberate so results can feed automation. Paper Guard keeps
+two **deliberately separate presentation layers**: human-readable prose on your
+terminal, and canonical machine-readable records on disk.
+
+```text
+Paper Guard
+    │
+    ▼
+JSON
+    │
+    ├── jq
+    ├── Python
+    ├── CI/CD
+    ├── dashboards
+    └── other LLM/automation systems
+```
+
+For every run, Paper Guard writes **canonical JSON artifacts** to the run's
+data directory (`{data_dir}/{run_id}/`), independent of the `--style` and
+`--output` you choose on screen:
+
+- `claims.json`, `findings.json`, `judge.json`
+- `revisions.json`, `validation.json`, `ledger.json`, `paper.json`
+- `schema.json` (schema/run manifest)
+
+> There is intentionally **no `--output json` CLI flag**. JSON is emitted as
+> canonical on-disk artifacts, not to stdout. The `--output` flag only controls
+> the human-readable terminal report (`human` default, or `summary`).
+
+Use the artifacts from scripts or the shell:
+
+```bash
+jq '.[0] | {finding, severity, reviewer}' < .paper-guard/run-001/findings.json
+```
+
+or from Python / CI / charts by reading the same JSON files. Because the JSON
+is the canonical representation, it is **stable regardless of presentation
+style** — the same logical findings produce byte-identical JSON whether viewed
+as `neutral`, `funny`, or `insulting`.
+
+---
+
+## Review styles
+
+| Style     | Purpose                                                           |
+| --------- | ----------------------------------------------------------------- |
+| neutral   | Scientific / professional default                                 |
+| funny     | Humorous presentation                                             |
+| insulting | Aggressively critical presentation of the paper, **never** the author |
+
+> **Styles change presentation only. They do not change the underlying
+> scientific review.**
+
+Select with `--style`; default priority is `--style` > `[review] style` config >
+`neutral`.
+
+---
+
+## Review findings and human approval
+
+A real review output may end with entries such as:
+
+```text
+needs approval: REV-0001 (finding PG-0003)
+```
+
+This is an important safety property:
+
+- Paper Guard **does not silently apply major revisions**.
+- Human approval **remains part of the workflow**.
+- A **normal `review` does not modify the manuscript** — it is read-only.
+- `--approve-all` exists and is an **explicit, user-controlled** option to
+  non-interactively approve all required revisions — never the default.
 
 ```
-paper-guard/
-├── Cargo.toml
-├── README.md
-├── LICENSE
-├── docs/                   # architecture documentation
-├── configs/                # default + OpenAI + Ollama example configuration
-├── examples/               # sample manuscripts
-├── deploy/helm/paper-guard # Helm chart for the service mode
-├── crates/
-│   ├── paper-guard-core/
-│   ├── paper-guard-llm/
-│   ├── paper-guard-parser/
-│   ├── paper-guard-review/
-│   ├── paper-guard-agents/
-│   ├── paper-guard-renderer/
-│   ├── paper-guard-validation/
-│   ├── paper-guard-ledger/
-│   ├── paper-guard-app/     # shared application layer (config, pipeline, memory)
-│   ├── paper-guard-report/  # presentation layer (human-readable report, styles)
-│   ├── paper-guard-service/ # optional HTTP service mode
-│   ├── paper-guard-client/  # HTTP client for a remote service (transport only)
-│   ├── paper-guard-discovery/ # LAN service discovery (mDNS/DNS-SD, mock)
-│   └── paper-guard-cli/
-└── tests/
+Review ≠ automatic rewriting
 ```
+
+Even with `--approve-all`, every change maps to a finding, follows an explicit
+revision instruction, is diffable, logged, and provenance-tagged. There are no
+silent changes.
+
+---
+
+## Scientific-integrity guarantees
+
+Paper Guard enforces these properties in the implementation:
+
+- **Reviewer-side schema validation** — reviewer output is validated against
+  the domain schema and rejected when invalid.
+- **JSON Schema structured output** — optional but recommended at the transport
+  layer for compatible local models; it never replaces domain validation.
+- **Invalid model responses rejected** — malformed output surfaces as
+  `REVIEWER_OUTPUT_INVALID` rather than being coerced into a finding.
+- **No unsafe free-form fallback** — if the requested structured-output mode
+  cannot be honoured, the provider fails explicitly rather than silently
+  downgrading to unconstrained interpretation.
+- **Human approval for required revisions** — major revisions require explicit
+  approval.
+- **Canonical RunRecord** — the canonical finding record is the single source
+  of scientific truth for a run.
+- **Presentation layer cannot modify canonical findings** — the report reads
+  from the run record and never becomes a second source of truth.
+- **Styles cannot alter scientific semantics** — `funny`/`insulting` change
+  wording only.
+- **Manuscript not modified by a normal review** — `review` is read-only.
+- **No generated experiments, results, references, or evidence** — no agent may
+  fabricate scientific content; missing evidence is reported as an explicit
+  state, never invented.
+- **Local-first execution** — the default provider is the deterministic
+  `mock`; with a local LLM, manuscripts need not leave the machine.
+- **Discovery does not imply authorization** — a discovered service is not
+  trusted or uploaded to automatically.
+- **Memory is explicitly controlled and approval-based** — see
+  [Review Memory](#14-review-memory).
+
+These are concrete engineering guarantees, not claims that Paper Guard makes a
+manuscript scientifically correct.
+
+---
+
+## Team / LAN functionality
+
+Paper Guard has optional **LAN discovery** for finding a Paper Guard service on
+the local network:
+
+- Service type **`_paper-guard._tcp`** via **mDNS / DNS-SD**.
+- Candidates are verified through `GET /health` (health verification).
+- **Version compatibility** is checked; a major-incompatible service is reported
+  as incompatible rather than used.
+- **Discovery is not authorization.** A manuscript is never uploaded merely
+  because a service was discovered; transmission requires explicit remote-mode
+  selection.
+- **Discovery is disabled by default** unless explicitly enabled in config
+  (`[discovery]`).
+- Paper Guard does not require you to run Avahi, and discovery uses standard
+  multicast (mDNS/DNS-SD) — no privileged networking is introduced by the
+  application.
+
+Because the pipeline lives in a shared application layer, a single running
+service can later serve several researchers; the architecture is suitable for a
+future shared team service without changing the review logic. See
+[`docs/architecture.md`](docs/architecture.md) for details.
+
+---
+
+## Review Memory
+
+Paper Guard has a **retrieval-based review-memory foundation**:
+
+```text
+review
+  ↓
+human feedback
+  ↓
+approval
+  ↓
+review memory
+  ↓
+semantic retrieval
+  ↓
+future reviewer guidance
+```
+
+Important properties:
+
+- **Disabled by default** (`[memory] enabled = false`); when enabled, it runs in
+  `off` / `read_only` / `write` / `read_write` modes.
+- **Human approval is required** before a unit becomes retrievable guidance.
+- **Memory is separate from the manuscript** — it is historical review
+  experience, never current-paper evidence, and it is injected as a clearly
+  delimited *untrusted* block so it cannot override the reviewer's system
+  prompt.
+- **Private / team scopes exist** — a private unit is visible only to its
+  owner; a team unit to the owning team.
+- **Rejected memory is never returned as guidance** and is removed from
+  retrieval/export eligibility.
+- This is **retrieval-based memory, not model fine-tuning**. Paper Guard does
+  **not** train or retrain the LLM; automatic LoRA/QLoRA-style training is
+  deliberately out of scope.
+
+---
+
+## Example: reviewing a real paper
+
+This is an end-to-end example that resembles a real successful local run on
+`phobos.tex`:
+
+```text
+Mode: local
+Provider: OpenAI-compatible
+Model: qwen/qwen3.5-9b
+structured_output = json_schema
+
+5 reviewers
+→ findings
+→ Judge
+→ consolidated findings
+→ human approval required
+→ revisions applied: 0
+→ paper modified: NO
+```
+
+Run it locally (source or release binary):
+
+```bash
+paper-guard review ./phobos.tex --config ./paper-guard-lmstudio.toml
+```
+
+The report shows the five reviewers, the Judge's consolidation, the
+consolidated findings, the items needing approval (at least one, e.g.
+`needs approval: REV-…`), and the validation block stating the manuscript was
+not modified (`revisions applied: 0`, `paper modified: NO`). This demonstrates
+the **workflow**; it is **not** a claim that the model's findings are
+automatically authoritative. Review each finding and give your own scientific
+judgment.
+
+---
+
+## Performance expectations
+
+Local LLM review can take **several minutes**, depending on:
+
+- model size
+- hardware (CPU/GPU, memory)
+- number of reviewers (default five, configurable)
+- context size
+- structured-output generation time
+- the number of reviewer and Judge LLM calls
+
+This is **expected** when running a real local model. Paper Guard does not make
+benchmark claims about end-to-end review times beyond this expectation; the
+deterministic `mock` provider is available whenever you want a fast, offline
+smoke test of the pipeline.
+
+---
+
+## Configuration precedence
+
+Paper Guard applies a `CLI > config > default` precedence where a CLI flag
+overrides configuration, which in turn overrides the built-in default. This is
+implemented for:
+
+- **Review style** — `--style` > `[review] style` (config) > `neutral`.
+- **Server selection** — an explicit `--server` flag always wins; a configured
+  `[server].url` is second; otherwise the run is local. No implicit switching
+  via environment variables.
+- **Provider configuration** — set in `config` (`[llm] provider` and
+  `[providers.openai-compatible]`); the default provider is the offline
+  `mock`.
+
+Secrets are always referenced by environment-variable **name** in config (e.g.
+`PAPER_GUARD_TOKEN`), never stored in the config file or logs.
+
+---
+
+## Security / privacy
+
+**Local-first privacy model.** For a local configuration:
+
+```text
+manuscript
+   ↓
+Paper Guard
+   ↓
+local LLM
+```
+
+No manuscript needs to leave the machine. Manuscript contents and API keys are
+never written to logs.
+
+**Remote OpenAI-compatible providers.** If you configure a remote
+OpenAI-compatible endpoint, the manuscript **may be sent to that provider**.
+Consider your institutional and legal privacy requirements before doing so. Not
+all OpenAI-compatible providers are local — LM Studio and Ollama are local
+examples, but OpenAI, Mammoth.ai, and other hosted endpoints are remote by
+definition.
+
+Discovered services are treated as untrusted input, and discovery never uploads
+a manuscript.
+
+---
+
+## Troubleshooting
+
+### Model not found
+
+If the local server does not know the configured model, inspect what it
+actually serves:
+
+```bash
+curl http://localhost:1234/v1/models    # LM Studio
+curl http://localhost:11434/v1/models   # Ollama
+```
+
+Then set `model` to a name that is actually present (e.g.
+`qwen/qwen3.5-9b` for LM Studio, any pulled `ollama` model for Ollama).
+
+### Provider asks for `OPENAI_API_KEY` unexpectedly
+
+Ensure the configuration uses the documented `[providers.openai-compatible]`
+table key, and that keyless local providers set an empty/no-key configuration
+(`api_key_env = ""`). When `api_key_env` is absent or empty, requests are sent
+without an `Authorization` header. Keys are read from the named environment
+variable only — never stored in config.
+
+### Structured output failures
+
+For compatible local models, use strict JSON Schema:
+
+```toml
+structured_output = "json_schema"
+```
+
+If a local model cannot reliably honour `response_format`, set it to
+`false`/`"off"`; the reviewer-side structured validation
+(`REVIEWER_OUTPUT_INVALID`) still protects the pipeline.
+
+### Windows firewall / mDNS
+
+On Windows, multicast can sometimes be blocked. `paper-guard discover` may then
+return **no services** because no mDNS replies are received. Paper Guard fails
+gracefully in this case: an empty result is **not** an error, and Paper Guard
+never silently uploads a manuscript or falls back to a different service. To
+reach a known service directly, use the explicit remote-mode flag instead:
+`paper-guard review paper.tex --server http://paper-guard-host:8080`.
+
+---
+
+## Development / verification
+
+Paper Guard's normal validation (used by CI and by contributors) is:
+
+```bash
+cargo fmt --all -- --check
+cargo test --workspace
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo build --release
+cargo audit
+trivy fs .
+```
+
+The test suite is fully offline — no test makes a real API call. As of the
+v0.9.0 checkpoint the workspace has **263 passing tests** with a clean
+`clippy -D warnings` and clean `fmt --check`. An optional live end-to-end
+harness runs against a real endpoint only when explicitly enabled and never in
+CI (see [`docs/architecture.md`](docs/architecture.md)).
+
+### Security scanning and dependency updates
+
+The repository is guarded continuously:
+
+- **Trivy** runs on every push and pull request (`trivy fs .`) scanning for
+  vulnerabilities, secrets, and misconfigurations, and again as a gate before
+  any release is published. It fails on detected secrets and on actionable
+  HIGH/CRITICAL vulnerabilities.
+- **`cargo audit`** checks the committed `Cargo.lock` for known Rust crates
+  advisories.
+- **Dependabot** monitors **Cargo** dependencies and **GitHub Actions**
+  (`.github/dependabot.yml`). It opens weekly, bounded update PRs
+  (security updates remain enabled) that must pass the normal CI — including
+  fmt, test, clippy, build, and Trivy — before humans review and merge them.
+  Nothing is auto-merged.
+
+---
+
+## Version / release status
+
+Current release: **v0.9.0**, which includes the human-readable report and the
+`neutral` / `funny` / `insulting` presentation styles.
+
+Review memory is retrieval-based; model training / fine-tuning (LoRA, QLoRA) is
+deliberately not part of the current workflow. See [Review Memory](#14-review-memory).
+
+---
+
+## Documentation links
+
+- [`docs/architecture.md`](docs/architecture.md) — full architecture, crates,
+  security model, integrity coverage.
+- [`docs/windows.md`](docs/windows.md) — detailed Windows instructions.
+- [`configs/`](configs/) — example configuration (deterministic default, Ollama,
+  OpenAI, and a real-provider example).
 
 ---
 

@@ -8,9 +8,14 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
   workflow_dispatch:
+
+# Least-privilege: CI only reads the repository and uploads its own build
+# artifacts; it never needs write access to the repository contents.
+permissions:
+  contents: read
 
 env:
   # Fail the build on warnings to keep the warning debt at zero.
@@ -29,6 +34,33 @@ jobs:
         run: cargo install cargo-audit --locked
       - name: Audit dependencies
         run: cargo audit
+
+  # Trivy filesystem scan covering the repository contents on every push and PR.
+  # Fails on detected secrets and on actionable HIGH/CRITICAL vulnerabilities, so
+  # a new dependency with a known vulnerability cannot land unnoticed.
+  #
+  # Scope: we scan vulnerabilities (Cargo.lock) and secrets. Kubernetes
+  # misconfiguration findings (Trivy "misconfig" scanner) on the OPTIONAL Helm
+  # chart under deploy/ are a documented, pre-existing, accepted exception: they
+  # are deployment-hardening gaps for the optional server mode, they are not part
+  # of the distributable release artifacts (binaries + QUICKSTART + LICENSE) or
+  # the local researcher workflow, and they are out of scope for this milestone.
+  # They are surfaced by `trivy fs --scanners misconfig deploy/` for maintainers.
+  trivy:
+    name: trivy security scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          skip-dirs: target
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
 
   test:
     name: test (${{ matrix.os }})

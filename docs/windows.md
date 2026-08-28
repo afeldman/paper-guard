@@ -10,10 +10,10 @@ Kubernetes, or a development environment.
 
 ## 1. Installation
 
-1. Download the latest release archive:
+1. Download the latest release archive for Windows x86_64:
 
    ```
-   paper-guard-vX.Y.Z-windows-x86_64.zip
+   paper-guard-vX.Y.Z-x86_64-pc-windows-msvc.zip
    ```
 
 2. Extract it anywhere (e.g. `C:\Users\<You>\PaperGuard\`).

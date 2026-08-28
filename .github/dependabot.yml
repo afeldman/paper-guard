@@ -1,0 +1,36 @@
+# Dependabot version updates for Paper Guard.
+#
+# Cargo (Rust) dependencies and GitHub Actions are kept current on a weekly
+# schedule with a bounded number of open PRs. Dependabot security updates remain
+# enabled (this file does not disable them) so critical dependency fixes arrive
+# promptly. Dependency updates pass the normal CI (fmt + test + clippy + build +
+# Trivy) and are merged only after human review — nothing is auto-merged.
+version: 2
+
+updates:
+  # Rust workspace dependencies. The committed Cargo.lock is updated together
+  # with Cargo.toml so builds stay locked and reproducible.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: "Europe/Berlin"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+
+  # GitHub Actions (workflow actions and scanning actions). Kept on stable,
+  # pinned versions rather than floating references like @main.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: "Europe/Berlin"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(ci)"

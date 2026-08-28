@@ -1,57 +1,118 @@
 # Release build for Paper Guard.
 #
-# Triggered on an annotated, signed tag like `vX.Y.Z`. Builds release binaries
-# natively on Windows, macOS, and Linux, packages each into a versioned ZIP
-# (Windows gets `paper-guard-vX.Y.Z-windows-x86_64.zip`), generates SHA-256
-# checksums, and creates a GitHub Release with the artifacts, the source
+# Triggered on an annotated, signed tag like `vX.Y.Z`. Runs an authoritative
+# validation job, then builds native, distributable binaries on the supported
+# cross-platform matrix, packages each into a versioned archive named by its
+# Rust target triple, generates and verifies SHA-256 checksums, runs a Trivy
+# security gate, and creates a GitHub Release with the artifacts, the source
 # archive, and release notes.
 #
+# Supported release matrix (intentional; macOS Intel is out of scope):
+#   macOS ARM64   -> aarch64-apple-darwin          (native Apple Silicon runner)
+#   Linux ARM64   -> aarch64-unknown-linux-gnu     (cross, reproducible container)
+#   Linux x86_64  -> x86_64-unknown-linux-gnu      (native ubuntu-latest)
+#   Windows x86_64-> x86_64-pc-windows-msvc        (native MSVC; never MinGW)
+#
 # The Windows binary is produced by a native `windows-latest` MSVC build (never
-# cross-compiled from macOS), so the artifact Christian receives is exactly
-# what CI produced from the tagged Git commit.
+# cross-compiled), so the artifact a Windows researcher receives is exactly what
+# CI produced from the tagged Git commit.
 name: Release
 
 on:
   push:
     tags: ["v*"]
 
+# Least-privilege by default: every job inherits this. Only the publishing
+# `release` job is granted the elevated contents:write it needs to create the
+# GitHub Release.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: never
+  # Rust toolchain profile used everywhere in this workflow.
+  RUST_TOOLCHAIN: stable
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Authoritative validation: fmt + test + clippy + release compile check run
+  # once (on the fastest runner) rather than redundantly in every matrix job.
+  # Each matrix job below is responsible for its own platform compile + binary
+  # smoke test. The release fails if validation fails.
+  # ---------------------------------------------------------------------------
+  validation:
+    name: validation (fmt + test + clippy + release build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - name: Format check
+        run: cargo fmt --all -- --check
+      - name: Test (workspace)
+        run: cargo test --workspace
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Build release
+        run: cargo build --release -p paper-guard-cli
+
+  # ---------------------------------------------------------------------------
+  # Cross-platform native release builds. Each job builds exactly one target,
+  # smoke-tests the resulting binary, stages QUICKSTART.md + LICENSE alongside
+  # it, and packages a versioned archive named by the Rust target triple.
+  # ---------------------------------------------------------------------------
   build:
     name: build (${{ matrix.target }})
+    needs: validation
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact_root: paper-guard
-            ext: .exe
-            zip: windows-x86_64
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            artifact_root: paper-guard
-            ext: ""
-            zip: macos-x86_64
-          - os: macos-latest
+          # macOS ARM64 — native Apple Silicon runner.
+          - os: macos-14
             target: aarch64-apple-darwin
-            artifact_root: paper-guard
+            bin: paper-guard
             ext: ""
-            zip: macos-aarch64
+            archive_ext: zip
+            archive_name: aarch64-apple-darwin
+          # Linux ARM64 — reproduced via `cross` (pinned, containerised toolchain).
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            bin: paper-guard
+            ext: ""
+            archive_ext: tar.gz
+            archive_name: aarch64-unknown-linux-gnu
+          # Linux x86_64 — native.
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact_root: paper-guard
+            bin: paper-guard
             ext: ""
-            zip: linux-x86_64
+            archive_ext: tar.gz
+            archive_name: x86_64-unknown-linux-gnu
+          # Windows x86_64 — native MSVC.
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: paper-guard
+            ext: .exe
+            archive_ext: zip
+            archive_name: x86_64-pc-windows-msvc
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # Install the Rust target toolchain. For native targets this is a plain
+      # component install; for the cross-compiled Linux ARM64 target we use
+      # `cross`, which provides its own containerised aarch64 GNU toolchain.
       - name: Install Rust toolchain (${{ matrix.target }})
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -61,8 +122,6 @@ jobs:
         with:
           workspaces: ". -> target"
 
-      # Make the build reproducibly traceable to the tagged commit. The commit
-      # id is embedded into the binary (commit hash only; never secrets).
       - name: Set build metadata
         id: meta
         shell: bash
@@ -70,54 +129,145 @@ jobs:
           echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           echo "commit=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Build release (${{ matrix.target }})
-        run: cargo build --release --target ${{ matrix.target }} -p paper-guard-cli
+      # Install `cross` for the Linux ARM64 containerised build. `cargo install
+      # cross --locked` pins to the locked release; the cross-rs image is tagged
+      # per Rust toolchain for reproducibility.
+      - name: Install cross (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: cargo install cross --locked
 
+      # Build release. `PAPER_GUARD_BUILD_COMMIT` is embedded into the binary
+      # (commit hash only; never secrets) so every artifact is traceable to Git.
+      - name: Build release (${{ matrix.target }})
+        shell: bash
+        env:
+          PAPER_GUARD_BUILD_COMMIT: ${{ steps.meta.outputs.commit }}
+        run: |
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            cross build --release --target ${{ matrix.target }} -p paper-guard-cli
+          else
+            cargo build --release --target ${{ matrix.target }} -p paper-guard-cli
+          fi
+
+      # -----------------------------------------------------------------------
+      # Binary smoke tests. This is NOT a real LLM review; it is a
+      # deterministic, offline check that the binary exists, starts, reports
+      # the expected version + commit, and that --help works with no dependency
+      # on the repository checkout (we cd to /tmp first for the runnable tests).
+      # -----------------------------------------------------------------------
+      - name: Smoke test — exists + version + help (POSIX)
+        shell: bash
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          BIN="target/${{ matrix.target }}/release/${{ matrix.bin }}${{ matrix.ext }}"
+          test -x "$BIN"
+          VERSION_ACTUAL="$($BIN --version)"
+          echo "version: $VERSION_ACTUAL"
+          case "$VERSION_ACTUAL" in
+            paper-guard\ ${{ steps.meta.outputs.version }}) echo "version ok" ;;
+            *) echo "unexpected version: $VERSION_ACTUAL"; exit 1 ;;
+          esac
+          # Confirm the commit metadata was embedded (provenance). Capture to a
+          # variable to avoid a broken pipe from an early-exiting `grep -q`.
+          INFO_OUT="$($BIN info)"
+          echo "$INFO_OUT" | grep -q "commit=${{ steps.meta.outputs.commit }}"
+          echo "$INFO_OUT"
+          # Copy away from the checkout and run from /tmp to prove there is no
+          # dependency on the repository working directory.
+          cp "$BIN" /tmp/pg-smoke
+          cd /tmp
+          ./pg-smoke --help >/dev/null
+          ./pg-smoke info >/dev/null
+          ./pg-smoke diagnostics --paths >/dev/null
+          echo "smoke ok: $(./pg-smoke info)"
+
+      - name: Smoke test — exists + version + help (Windows)
+        shell: powershell
+        if: runner.os == 'Windows'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = "target\${{ matrix.target }}\release\${{ matrix.bin }}${{ matrix.ext }}"
+          Test-Path $exe | Out-Host
+          & $exe --version
+          & $exe --help | Out-Null
+          & $exe info
+          & $exe diagnostics --paths | Out-Null
+          Write-Host "smoke ok"
+
+      # Assemble a clean package directory: exactly binary + QUICKSTART + LICENSE.
       - name: Assemble package directory
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${{ steps.meta.outputs.version }}"
-          ART="${{ matrix.artifact_root }}"
-          EXT="${{ matrix.ext }}"
           PKGDIR="package"
           mkdir -p "$PKGDIR"
-          cp "target/${{ matrix.target }}/release/${ART}${EXT}" "$PKGDIR/${ART}${EXT}"
+          cp "target/${{ matrix.target }}/release/${{ matrix.bin }}${{ matrix.ext }}" "$PKGDIR/"
           cp QUICKSTART.md "$PKGDIR/QUICKSTART.md"
           cp LICENSE "$PKGDIR/LICENSE"
-          # Elide any extraneous artifacts; the package holds exactly the
-          # binary + QUICKSTART + LICENSE.
+          ls -la "$PKGDIR"
 
-      - name: Create ZIP (cross-platform)
+      # Create the versioned archive named by the Rust target triple.
+      - name: Package archive (${{ matrix.archive_ext }})
         shell: bash
         env:
           VERSION: ${{ steps.meta.outputs.version }}
-          ZIP: ${{ matrix.zip }}
+          ARCH: ${{ matrix.archive_name }}
+          EXT: ${{ matrix.archive_ext }}
         run: |
           set -euo pipefail
-          cd package
-          # `zip` is available on all GitHub runners (including windows-latest
-          # via Git for Windows). Fall back to Python's zipfile otherwise.
-          if command -v zip >/dev/null 2>&1; then
-            zip -r "../paper-guard-v${VERSION}-${ZIP}.zip" .
+          name="paper-guard-v${VERSION}-${ARCH}.${EXT}"
+          if [ "$EXT" = "zip" ]; then
+            ( cd package && zip -qr "../${name}" . )
           else
-            python3 - "$VERSION" "$ZIP" <<'PY'
-            import shutil, sys, os
-            ver = sys.argv[1]
-            z = sys.argv[2]
-            os.chdir(".")
-            shutil.make_archive(f"../paper-guard-v{ver}-{z}", "zip", ".")
-            PY
+            tar -C package -czf "${name}" .
           fi
-          cd ..
-          ls -la "paper-guard-v${VERSION}-${ZIP}.zip"
+          ls -la "${name}"
+          echo "artifact=${name}" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: paper-guard-v${{ steps.meta.outputs.version }}-${{ matrix.zip }}
-          path: paper-guard-v${{ steps.meta.outputs.version }}-${{ matrix.zip }}.zip
+          name: paper-guard-v${{ steps.meta.outputs.version }}-${{ matrix.archive_name }}
+          path: paper-guard-v${{ steps.meta.outputs.version }}-${{ matrix.archive_name }}.${{ matrix.archive_ext }}
 
+  # ---------------------------------------------------------------------------
+  # Trivy security gate for the release. The release must NOT be published if
+  # this job fails. We scan the tagged checkout filesystem for vulnerabilities
+  # (Cargo.lock) and secrets (skipping only generated build dirs).
+  #
+  # Scope: the release artifacts are the binary + QUICKSTART.md + LICENSE. We
+  # gate on vulnerabilities and secrets, which are what could affect a shipped
+  # artifact. Kubernetes misconfiguration findings on the OPTIONAL Helm chart
+  # under deploy/ are a documented, pre-existing, accepted exception (server-mode
+  # hardening gaps, not part of the distributable artifacts; surfaced separately
+  # via `trivy fs --scanners misconfig deploy/`).
+  # ---------------------------------------------------------------------------
+  trivy-gate:
+    name: security gate (trivy)
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          skip-dirs: target
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+
+  # ---------------------------------------------------------------------------
+  # Checksums: generate SHA256SUMS covering every release archive and verify the
+  # checksums against the archives before publishing.
+  # ---------------------------------------------------------------------------
   checksums:
     name: checksums
     needs: build
@@ -132,8 +282,12 @@ jobs:
       - name: Generate SHA256SUMS
         run: |
           cd artifacts
-          find . -type f -name '*.zip' -exec sha256sum {} \; > SHA256SUMS
+          find . -type f \( -name '*.zip' -o -name '*.tar.gz' \) -exec sha256sum {} \; | sort > SHA256SUMS
           cat SHA256SUMS
+      - name: Verify checksums
+        run: |
+          cd artifacts
+          sha256sum --check SHA256SUMS
       - name: Upload checksums + artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -141,10 +295,36 @@ jobs:
           path: |
             artifacts/SHA256SUMS
             artifacts/*.zip
+            artifacts/*.tar.gz
 
+  # ---------------------------------------------------------------------------
+  # Source archive (present in every release alongside the binaries).
+  # ---------------------------------------------------------------------------
+  source:
+    name: source archive
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Create source tarball
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          tar --exclude='./target' --exclude='./.git' -czf "paper-guard-${VERSION}.tar.gz" .
+          ls -la "paper-guard-${VERSION}.tar.gz"
+      - name: Upload source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-tarball
+          path: paper-guard-*.tar.gz
+
+  # ---------------------------------------------------------------------------
+  # Publish the GitHub Release. Runs only after builds, checksums, the Trivy
+  # gate, and the source archive all succeed.
+  # ---------------------------------------------------------------------------
   release:
     name: publish release
-    needs: [checksums, source]
+    needs: [checksums, trivy-gate, source]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -161,33 +341,51 @@ jobs:
           name: source-tarball
           path: dist
       - name: Generate release notes
+        env:
+          VERSION: ${{ github.ref_name }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          v="${VERSION#v}"
           cat > NOTES.md <<EOF
-          # Paper Guard $VERSION — Cross-Platform Release
+          # Paper Guard $VERSION - Cross-Platform Release
 
-          Windows, macOS, and Linux release artifacts produced natively by CI.
+          Native, distribution-only binaries produced by GitHub Actions from the
+          tagged Git commit. Paper Guard reviews an already-written manuscript;
+          it does not write scientific papers.
 
-          ## Windows (Team Client)
-          Download \`paper-guard-v${VERSION}-windows-x86_64.zip\`, extract, then run
-          \`.\paper-guard.exe\`.
+          ## Supported platforms
 
-          Verify with:
-          \`\`\`powershell
-          Get-FileHash .\paper-guard.exe -Algorithm SHA256
-          \`\`\`
-          Compare against the SHA256SUMS file included in this release.
+          | Platform | Archive |
+          | --- | --- |
+          | macOS ARM64 | paper-guard-${v}-aarch64-apple-darwin.zip |
+          | Linux ARM64 | paper-guard-${v}-aarch64-unknown-linux-gnu.tar.gz |
+          | Linux x86_64 | paper-guard-${v}-x86_64-unknown-linux-gnu.tar.gz |
+          | Windows x86_64 | paper-guard-${v}-x86_64-pc-windows-msvc.zip |
+
+          Each archive contains the binary, QUICKSTART.md, and LICENSE.
+
+          ## Windows quickstart
+
+          - download and extract paper-guard-${v}-x86_64-pc-windows-msvc.zip
+          - run: .\\paper-guard.exe --help
+          - configure a local OpenAI-compatible provider (e.g. Ollama), then:
+            .\\paper-guard.exe review paper.tex
+
+          ## Verify an archive
+
+          Verify against this release's SHA256SUMS file.
+
+          - Linux: sha256sum -c SHA256SUMS
+          - macOS: shasum -a 256 paper-guard-<archive>
+          - Windows: Get-FileHash .\\paper-guard.exe -Algorithm SHA256
 
           ## Artifacts
-          - \`paper-guard-${VERSION}-windows-x86_64.zip\` (Windows Team Client)
-          - \`paper-guard-${VERSION}-macos-x86_64.zip\`
-          - \`paper-guard-${VERSION}-macos-aarch64.zip\`
-          - \`paper-guard-${VERSION}-linux-x86_64.zip\`
-          - \`paper-guard-${VERSION}.tar.gz\` (source archive)
-          - \`SHA256SUMS\` (checksums for every artifact)
 
-          ## Checksums
-          See \`SHA256SUMS\`.
+          - paper-guard-${v}-aarch64-apple-darwin.zip
+          - paper-guard-${v}-aarch64-unknown-linux-gnu.tar.gz
+          - paper-guard-${v}-x86_64-unknown-linux-gnu.tar.gz
+          - paper-guard-${v}-x86_64-pc-windows-msvc.zip
+          - paper-guard-${v}.tar.gz (source archive)
+          - SHA256SUMS (checksums for every artifact)
           EOF
           cat NOTES.md
       - name: Create GitHub Release
@@ -202,19 +400,3 @@ jobs:
             dist/*.tar.gz
           draft: false
           prerelease: false
-
-  # Copy the source archive into the release as well.
-  source:
-    name: source archive
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Create source tarball
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          tar --exclude='./target' -czf "paper-guard-${VERSION}.tar.gz" .
-      - name: Upload source archive
-        uses: actions/upload-artifact@v4
-        with:
-          name: source-tarball
-          path: paper-guard-*.tar.gz

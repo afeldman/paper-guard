@@ -51,7 +51,7 @@ pub fn log_agent_failure(run_id: &str, agent: &str, err: &str) {
 
 /// Log the selected real provider (never the API key itself, only the provider
 /// kind, model, and capability flags).
-pub fn log_provider_selected(model: &str, structured_output: bool, vision: bool) {
+pub fn log_provider_selected(model: &str, structured_output: &str, vision: bool) {
     info!(
         "{} | stage={} | agent={} | event=provider_selected | model={} | structured_output={} | vision={}",
         "pipeline", "review", "pipeline", model, structured_output, vision

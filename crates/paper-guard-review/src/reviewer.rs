@@ -159,6 +159,12 @@ pub trait Reviewer: Send + Sync {
             request = request.with_seed(seed);
         }
         request = request.with_temperature(self.settings().temperature);
+        // Attach the reviewer JSON-Schema structured-output specification. The
+        // provider encodes it as `response_format:{"type":"json_schema",...}`
+        // only when the configured transport mode is JSON Schema; otherwise it
+        // is carried as metadata (json_object / off modes) and the reviewer-side
+        // domain validation remains authoritative in every mode.
+        request = request.with_structured_output(crate::reviewer_schema_spec());
         if self.wants_images() {
             for fig in &ctx.document.figures {
                 if let Some(asset) = &fig.asset {

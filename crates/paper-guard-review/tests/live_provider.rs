@@ -20,7 +20,7 @@
 
 use paper_guard_llm::{
     LlmProvider, OpenAICompatibleConfig, OpenAICompatibleProvider, ProviderCapabilities,
-    ProviderKind, RetryPolicy,
+    ProviderKind, RetryPolicy, StructuredOutputMode,
 };
 use paper_guard_parser::Parser;
 use paper_guard_review::{AgentStatus, ReviewRunner, ReviewerContext, ReviewerSettings};
@@ -80,7 +80,7 @@ async fn live_single_reviewer_end_to_end() {
         },
         max_tokens: Some(512),
         capabilities: ProviderCapabilities::TEXT_AND_STRUCTURED,
-        use_structured_output: true,
+        structured_output: StructuredOutputMode::JsonObject,
     };
     // Constructing without a key produces a clear configuration error early.
     let provider = OpenAICompatibleProvider::new(cfg).expect("configure real provider");

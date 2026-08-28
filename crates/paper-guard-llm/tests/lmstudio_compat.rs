@@ -12,7 +12,7 @@
 
 use paper_guard_llm::{
     LlmProvider, LlmRequest, OpenAICompatibleConfig, OpenAICompatibleProvider,
-    ProviderCapabilities, RetryPolicy,
+    ProviderCapabilities, RetryPolicy, StructuredOutputMode,
 };
 use wiremock::matchers::{body_partial_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -37,7 +37,7 @@ fn lmstudio_provider(server: &MockServer) -> OpenAICompatibleProvider {
         },
         max_tokens: Some(1024),
         capabilities: ProviderCapabilities::TEXT_AND_STRUCTURED,
-        use_structured_output: true,
+        structured_output: StructuredOutputMode::JsonObject,
     };
     OpenAICompatibleProvider::new(cfg).unwrap()
 }

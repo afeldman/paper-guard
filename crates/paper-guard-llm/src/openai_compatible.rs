@@ -17,7 +17,7 @@ use reqwest::StatusCode;
 
 use crate::{
     ContentPart, LlmProvider, LlmRequest, LlmResponse, LlmUsage, ModelConfig, ProviderCapabilities,
-    ProviderError, ProviderKind, TransientKind,
+    ProviderError, ProviderKind, StructuredOutputMode, TransientKind,
 };
 
 /// Retry / backoff policy for the OpenAI-compatible provider.
@@ -80,20 +80,20 @@ pub struct OpenAICompatibleConfig {
     /// Capabilities the configured endpoint/model actually supports.
     #[serde(default)]
     pub capabilities: ProviderCapabilities,
-    /// Whether structured JSON output (`response_format: {"type":"json_object"}`)
-    /// is requested. Reviewers already require structural JSON; this is exposed
-    /// so an endpoint that cannot honour it can be configured to degrade to the
-    /// reviewer-side validation path.
-    #[serde(default = "default_structured")]
-    pub use_structured_output: bool,
+    /// How this OpenAI-compatible endpoint constrains its structured output
+    /// at the transport layer. Chosen by configuration; the provider never
+    /// silently downgrades from a stricter mode to a looser one. The endpoint
+    /// must support the chosen mode or the provider fails explicitly.
+    #[serde(default = "default_structured_mode")]
+    pub structured_output: StructuredOutputMode,
 }
 
 fn default_timeout_seconds() -> u64 {
     120
 }
 
-fn default_structured() -> bool {
-    true
+fn default_structured_mode() -> StructuredOutputMode {
+    StructuredOutputMode::JsonObject
 }
 
 impl Default for OpenAICompatibleConfig {
@@ -107,7 +107,7 @@ impl Default for OpenAICompatibleConfig {
             retry: RetryPolicy::default(),
             max_tokens: None,
             capabilities: ProviderCapabilities::TEXT_AND_STRUCTURED,
-            use_structured_output: default_structured(),
+            structured_output: default_structured_mode(),
         }
     }
 }
@@ -125,7 +125,7 @@ impl OpenAICompatibleConfig {
         retry: RetryPolicy,
         timeout_seconds: u64,
         capabilities: ProviderCapabilities,
-        use_structured_output: bool,
+        structured_output: StructuredOutputMode,
     ) -> Self {
         OpenAICompatibleConfig {
             base_url: base_url.to_string(),
@@ -136,7 +136,7 @@ impl OpenAICompatibleConfig {
             retry,
             max_tokens: model.max_tokens,
             capabilities,
-            use_structured_output,
+            structured_output,
         }
     }
 }
@@ -193,7 +193,7 @@ impl OpenAICompatibleProvider {
     }
 
     /// Build the request body for a single attempt.
-    fn build_request_body(&self, request: &LlmRequest) -> serde_json::Value {
+    fn build_request_body(&self, request: &LlmRequest) -> Result<serde_json::Value, ProviderError> {
         let mut messages = Vec::new();
         if !request.system.is_empty() {
             messages.push(serde_json::json!({
@@ -221,17 +221,65 @@ impl OpenAICompatibleProvider {
             // ignored, and recorded for reproducibility when honoured.
             body["seed"] = serde_json::json!(request.seed);
         }
-        // Structured output: request JSON mode when the endpoint claims support.
-        if self.config.use_structured_output && self.config.capabilities.structured_output {
-            body["response_format"] = serde_json::json!({"type": "json_object"});
+        // Structured output: encode the configured mode. This never silently
+        // downgrades — a mode that cannot be satisfied returns an explicit
+        // capability/config error instead.
+        self.add_structured_output(request, &mut body)?;
+        Ok(body)
+    }
+
+    /// Encode `response_format` according to the configured mode.
+    ///
+    /// * `JsonObject` emits `{"type":"json_object"}`.
+    /// * `JsonSchema` emits `{"type":"json_schema", ...}` using the schema from
+    ///   the incoming [`LlmRequest`]; if none is attached, that is a capability
+    ///   error (we never downgrade to unconstrained generation).
+    /// * `Off` sends no `response_format` (free-form text) — the historical
+    ///   `structured_output = false` behaviour.
+    fn add_structured_output(
+        &self,
+        request: &LlmRequest,
+        body: &mut serde_json::Value,
+    ) -> Result<(), ProviderError> {
+        if !self.config.capabilities.structured_output {
+            // The endpoint/model does not support structural JSON at all. If the
+            // operator explicitly asked for it, fail clearly rather than degrade.
+            if self.config.structured_output != StructuredOutputMode::Off {
+                return Err(ProviderError::Capability(
+                    crate::ProviderCapabilityError::StructuredOutputUnsupported,
+                ));
+            }
+            return Ok(());
         }
-        body
+        match self.config.structured_output {
+            StructuredOutputMode::Off => Ok(()),
+            StructuredOutputMode::JsonObject => {
+                body["response_format"] = serde_json::json!({"type": "json_object"});
+                Ok(())
+            }
+            StructuredOutputMode::JsonSchema => {
+                let spec = request.structured_output.as_ref().ok_or({
+                    ProviderError::Capability(
+                        crate::ProviderCapabilityError::StructuredOutputUnsupported,
+                    )
+                })?;
+                body["response_format"] = serde_json::json!({
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": spec.name,
+                        "strict": spec.strict,
+                        "schema": spec.schema,
+                    },
+                });
+                Ok(())
+            }
+        }
     }
 
     /// Perform a single HTTP call and classify the result.
     async fn attempt(&self, request: &LlmRequest) -> Result<LlmResponse, ProviderError> {
         let url = self.chat_completions_url();
-        let body = self.build_request_body(request);
+        let body = self.build_request_body(request)?;
 
         let mut req = self.client.post(&url).json(&body);
         if let Some(key) = &self.api_key {

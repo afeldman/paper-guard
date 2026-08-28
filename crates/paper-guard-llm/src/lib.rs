@@ -11,6 +11,7 @@
 mod mock;
 mod openai_compatible;
 mod provider;
+mod structured_output;
 
 pub use mock::{
     hash_bytes, with_schema, MockLlmFactory, MockLlmRequest, MockLlmScenario, MockOutcome,
@@ -21,6 +22,7 @@ pub use provider::{
     LlmContent, LlmImage, LlmProvider, ModelConfig, ProviderCapabilities, ProviderCapabilityError,
     ProviderError, ProviderKind, TransientKind,
 };
+pub use structured_output::{StructuredOutputMode, StructuredOutputSpec};
 
 use paper_guard_core::ContentHash;
 
@@ -52,6 +54,12 @@ pub struct LlmRequest {
     /// Maximum output tokens.
     #[serde(default)]
     pub max_tokens: Option<u32>,
+    /// Optional structured-output specification the provider may use to encode
+    /// `response_format` (JSON Schema). When present the pipeline is declaring
+    /// the JSON shape the reply must match at the transport layer; the
+    /// provider decides how to encode it based on its configured mode.
+    #[serde(default)]
+    pub structured_output: Option<StructuredOutputSpec>,
     /// A stable hash of the full request, for reproducibility.
     #[serde(skip)]
     pub request_hash: ContentHash,
@@ -75,6 +83,7 @@ impl LlmRequest {
             seed: None,
             temperature: 0.0,
             max_tokens: None,
+            structured_output: None,
             request_hash: ContentHash("0".into()),
             prompt_version: prompt_version.into(),
         };
@@ -98,6 +107,18 @@ impl LlmRequest {
     /// Set temperature.
     pub fn with_temperature(mut self, temperature: f32) -> Self {
         self.temperature = temperature;
+        self
+    }
+
+    /// Attach a JSON Schema structured-output specification to this request.
+    ///
+    /// The provider encodes it as `{"type":"json_schema", ...}` when its
+    /// configured [`StructuredOutputMode`] is `JsonSchema`, and otherwise
+    /// carries it as metadata (`json_object` / `Off` modes). The presence of a
+    /// spec never weakens downstream domain validation.
+    pub fn with_structured_output(mut self, spec: StructuredOutputSpec) -> Self {
+        self.structured_output = Some(spec);
+        self.request_hash = ContentHash::compute(&self);
         self
     }
 

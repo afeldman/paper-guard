@@ -25,8 +25,9 @@ pub use reviewer::{
 pub use reviewers::INTEGRITY_PREAMBLE;
 pub use runner::{collect_findings, AgentRunResult, AgentStatus, ReviewRunner};
 pub use schema::{
-    finding_from_payload, finding_to_payload, FindingCategory, FindingPayload, FindingSeverity,
-    MemoryBrief, ReviewerKind,
+    finding_from_payload, finding_schema_value, finding_to_payload, reviewer_schema_spec,
+    FindingCategory, FindingPayload, FindingSeverity, MemoryBrief, ReviewerKind,
+    REVIEWER_SCHEMA_NAME,
 };
 
 #[cfg(test)]

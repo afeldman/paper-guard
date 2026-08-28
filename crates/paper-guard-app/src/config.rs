@@ -66,6 +66,104 @@ pub struct ProvidersConfig {
     pub openai_compatible: OpenAICompatibleSectionConfig,
 }
 
+/// How an OpenAI-compatible endpoint constrains its output at the transport
+/// layer (the `response_format` of a chat-completions request).
+///
+/// This is a *configuration* knob describing what the operator wants the
+/// endpoint to do, mapped onto the provider's [`StructuredOutputMode`]. It is
+/// deliberately **not** a way to make an LLM scientifically trustworthy: it
+/// only constrains the JSON transport shape. Scientific validity is enforced
+/// separately by Paper Guard's domain validation, evidence checks, provenance,
+/// Judge, and integrity guards. JSON Schema enforcement is *not* scientific
+/// correctness.
+///
+/// It is backward compatible with the historical `bool` form:
+///
+/// ```toml
+/// structured_output = false   # free-form; reviewer-side validation still enforces JSON
+/// structured_output = true    # {"type":"json_object"} (historical default)
+/// structured_output = "json_object"
+/// structured_output = "json_schema"
+/// ```
+///
+/// `false`/`"off"` means no `response_format`; `true`/`"json_object"` means the
+/// endpoint constrains replies to a JSON object; `"json_schema"` means a full
+/// JSON Schema is sent (provided by the reviewer via the request). The provider
+/// never silently downgrades from a stricter requested mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StructuredOutputConfig {
+    /// No `response_format`; free-form text (with reviewer-side validation).
+    Off,
+    /// `{"type":"json_object"}` (historical `true`).
+    #[default]
+    JsonObject,
+    /// `{"type":"json_schema", ...}`.
+    JsonSchema,
+}
+
+impl StructuredOutputConfig {
+    /// Whether the endpoint/model is asked to produce structured JSON output.
+    pub fn supports_structured(&self) -> bool {
+        *self != StructuredOutputConfig::Off
+    }
+
+    /// The provider-level mode that corresponds to this configuration.
+    pub fn to_mode(&self) -> paper_guard_llm::StructuredOutputMode {
+        match self {
+            StructuredOutputConfig::Off => paper_guard_llm::StructuredOutputMode::Off,
+            StructuredOutputConfig::JsonObject => paper_guard_llm::StructuredOutputMode::JsonObject,
+            StructuredOutputConfig::JsonSchema => paper_guard_llm::StructuredOutputMode::JsonSchema,
+        }
+    }
+
+    /// A short stable label for logging.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            StructuredOutputConfig::Off => "off",
+            StructuredOutputConfig::JsonObject => "json_object",
+            StructuredOutputConfig::JsonSchema => "json_schema",
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for StructuredOutputConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Bool(bool),
+            Str(String),
+        }
+        match Raw::deserialize(deserializer)? {
+            Raw::Bool(true) => Ok(StructuredOutputConfig::JsonObject),
+            Raw::Bool(false) => Ok(StructuredOutputConfig::Off),
+            Raw::Str(s) => match s.trim().to_ascii_lowercase().as_str() {
+                "off" | "false" | "disabled" | "none" => Ok(StructuredOutputConfig::Off),
+                "json_object" | "json-object" | "true" | "object" => {
+                    Ok(StructuredOutputConfig::JsonObject)
+                }
+                "json_schema" | "json-schema" | "schema" => Ok(StructuredOutputConfig::JsonSchema),
+                other => Err(serde::de::Error::custom(format!(
+                    "invalid structured_output value `{other}`; expected one of \
+                     false, true, \"json_object\", or \"json_schema\""
+                ))),
+            },
+        }
+    }
+}
+
+impl Serialize for StructuredOutputConfig {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
 /// The `[providers.openai-compatible]` section.
 ///
 /// This is the single production backend connecting to any OpenAI-compatible
@@ -89,8 +187,11 @@ pub struct OpenAICompatibleSectionConfig {
     pub timeout_seconds: u64,
     /// Maximum number of retries (transient errors only).
     pub max_retries: u32,
-    /// Whether the endpoint supports structured JSON output.
-    pub structured_output: bool,
+    /// How the endpoint constrains its output at the transport layer. See
+    /// [`StructuredOutputConfig`] for the accepted values and the distinction
+    /// from scientific validity.
+    #[serde(default)]
+    pub structured_output: StructuredOutputConfig,
     /// Whether the endpoint/model supports multimodal vision input.
     pub vision: bool,
 }
@@ -103,7 +204,7 @@ impl Default for OpenAICompatibleSectionConfig {
             model: "gpt-4o-mini".into(),
             timeout_seconds: 120,
             max_retries: 2,
-            structured_output: true,
+            structured_output: StructuredOutputConfig::default(),
             vision: false,
         }
     }
@@ -641,7 +742,13 @@ vision = false
         assert_eq!(sec.model, "qwen/qwen3.5-9b");
         assert_eq!(sec.timeout_seconds, 120);
         assert_eq!(sec.max_retries, 2);
-        assert!(sec.structured_output);
+        // `structured_output = true` must map to JSON-object mode (historical
+        // semantics unchanged).
+        assert_eq!(
+            sec.structured_output,
+            crate::config::StructuredOutputConfig::JsonObject
+        );
+        assert!(sec.structured_output.supports_structured());
         assert!(!sec.vision);
 
         // Keyless case: `api_key_env = ""` must be treated as "no API key" —
@@ -671,6 +778,84 @@ provider = "openai-compatible"
             Some("OPENAI_API_KEY"),
             "default must remain key-bearing to preserve existing behavior"
         );
+    }
+
+    #[test]
+    fn structured_output_accepts_json_schema_string() {
+        // The documented opt-in for JSON Schema transport mode. This constrains
+        // the JSON *transport* shape only; scientific validity is still enforced
+        // by reviewer-side domain validation (not by structured output).
+        let src = r#"
+[llm]
+provider = "openai-compatible"
+
+[providers.openai-compatible]
+base_url = "http://localhost:1234/v1"
+model = "qwen/qwen3.5-9b"
+api_key_env = ""
+structured_output = "json_schema"
+"#;
+        let cfg: AppConfig = toml::from_str(src).unwrap();
+        let sec = &cfg.providers.openai_compatible;
+        assert_eq!(
+            sec.structured_output,
+            crate::config::StructuredOutputConfig::JsonSchema
+        );
+        assert!(sec.structured_output.supports_structured());
+        // The provider-level mode that will be used.
+        assert_eq!(
+            sec.structured_output.to_mode(),
+            paper_guard_llm::StructuredOutputMode::JsonSchema
+        );
+    }
+
+    #[test]
+    fn structured_output_accepts_off_string_and_false() {
+        // `structured_output = false` means free-form at the transport layer
+        // (reviewer-side validation still enforces JSON). The string `"off"`
+        // is equivalent.
+        let src = r#"
+[llm]
+provider = "openai-compatible"
+
+[providers.openai-compatible]
+structured_output = false
+"#;
+        let cfg: AppConfig = toml::from_str(src).unwrap();
+        assert_eq!(
+            cfg.providers.openai_compatible.structured_output,
+            crate::config::StructuredOutputConfig::Off
+        );
+        assert!(!cfg
+            .providers
+            .openai_compatible
+            .structured_output
+            .supports_structured());
+
+        let src2 = r#"
+[llm]
+provider = "openai-compatible"
+
+[providers.openai-compatible]
+structured_output = "off"
+"#;
+        let cfg2: AppConfig = toml::from_str(src2).unwrap();
+        assert_eq!(
+            cfg2.providers.openai_compatible.structured_output,
+            crate::config::StructuredOutputConfig::Off
+        );
+    }
+
+    #[test]
+    fn structured_output_rejects_unknown_string() {
+        let src = r#"
+[llm]
+provider = "openai-compatible"
+
+[providers.openai-compatible]
+structured_output = "bogus"
+"#;
+        assert!(toml::from_str::<AppConfig>(src).is_err());
     }
 
     #[test]

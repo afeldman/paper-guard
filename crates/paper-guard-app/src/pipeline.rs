@@ -67,7 +67,7 @@ pub fn build_provider(
             let sec = &config.providers.openai_compatible;
             let capabilities = paper_guard_llm::ProviderCapabilities {
                 text: true,
-                structured_output: sec.structured_output,
+                structured_output: sec.structured_output.supports_structured(),
                 vision: sec.vision,
             };
             let cfg = paper_guard_llm::OpenAICompatibleConfig {
@@ -84,10 +84,10 @@ pub fn build_provider(
                 },
                 max_tokens: None,
                 capabilities,
-                use_structured_output: sec.structured_output,
+                structured_output: sec.structured_output.to_mode(),
             };
             let provider = paper_guard_llm::OpenAICompatibleProvider::new(cfg)?;
-            logging::log_provider_selected(&sec.model, sec.structured_output, sec.vision);
+            logging::log_provider_selected(&sec.model, sec.structured_output.as_str(), sec.vision);
             Ok(Arc::new(provider) as Arc<dyn paper_guard_llm::LlmProvider>)
         }
         other => Err(anyhow::anyhow!(

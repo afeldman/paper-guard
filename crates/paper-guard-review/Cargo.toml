@@ -8,6 +8,7 @@ description = "Reviewer and Judge agents for Paper Guard."
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+schemars = { version = "1.2", features = ["preserve_order"] }
 anyhow.workspace = true
 tokio.workspace = true
 futures.workspace = true

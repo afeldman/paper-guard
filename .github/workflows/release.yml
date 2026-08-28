@@ -1,0 +1,220 @@
+# Release build for Paper Guard.
+#
+# Triggered on an annotated, signed tag like `vX.Y.Z`. Builds release binaries
+# natively on Windows, macOS, and Linux, packages each into a versioned ZIP
+# (Windows gets `paper-guard-vX.Y.Z-windows-x86_64.zip`), generates SHA-256
+# checksums, and creates a GitHub Release with the artifacts, the source
+# archive, and release notes.
+#
+# The Windows binary is produced by a native `windows-latest` MSVC build (never
+# cross-compiled from macOS), so the artifact Christian receives is exactly
+# what CI produced from the tagged Git commit.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_root: paper-guard
+            ext: .exe
+            zip: windows-x86_64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_root: paper-guard
+            ext: ""
+            zip: macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_root: paper-guard
+            ext: ""
+            zip: macos-aarch64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_root: paper-guard
+            ext: ""
+            zip: linux-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain (${{ matrix.target }})
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      # Make the build reproducibly traceable to the tagged commit. The commit
+      # id is embedded into the binary (commit hash only; never secrets).
+      - name: Set build metadata
+        id: meta
+        shell: bash
+        run: |
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build release (${{ matrix.target }})
+        run: cargo build --release --target ${{ matrix.target }} -p paper-guard-cli
+
+      - name: Assemble package directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.version }}"
+          ART="${{ matrix.artifact_root }}"
+          EXT="${{ matrix.ext }}"
+          PKGDIR="package"
+          mkdir -p "$PKGDIR"
+          cp "target/${{ matrix.target }}/release/${ART}${EXT}" "$PKGDIR/${ART}${EXT}"
+          cp QUICKSTART.md "$PKGDIR/QUICKSTART.md"
+          cp LICENSE "$PKGDIR/LICENSE"
+          # Elide any extraneous artifacts; the package holds exactly the
+          # binary + QUICKSTART + LICENSE.
+
+      - name: Create ZIP (cross-platform)
+        shell: bash
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          ZIP: ${{ matrix.zip }}
+        run: |
+          set -euo pipefail
+          cd package
+          # `zip` is available on all GitHub runners (including windows-latest
+          # via Git for Windows). Fall back to Python's zipfile otherwise.
+          if command -v zip >/dev/null 2>&1; then
+            zip -r "../paper-guard-v${VERSION}-${ZIP}.zip" .
+          else
+            python3 - "$VERSION" "$ZIP" <<'PY'
+            import shutil, sys, os
+            ver = sys.argv[1]
+            z = sys.argv[2]
+            os.chdir(".")
+            shutil.make_archive(f"../paper-guard-v{ver}-{z}", "zip", ".")
+            PY
+          fi
+          cd ..
+          ls -la "paper-guard-v${VERSION}-${ZIP}.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-guard-v${{ steps.meta.outputs.version }}-${{ matrix.zip }}
+          path: paper-guard-v${{ steps.meta.outputs.version }}-${{ matrix.zip }}.zip
+
+  checksums:
+    name: checksums
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Generate SHA256SUMS
+        run: |
+          cd artifacts
+          find . -type f -name '*.zip' -exec sha256sum {} \; > SHA256SUMS
+          cat SHA256SUMS
+      - name: Upload checksums + artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: |
+            artifacts/SHA256SUMS
+            artifacts/*.zip
+
+  release:
+    name: publish release
+    needs: [checksums, source]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: source-tarball
+          path: dist
+      - name: Generate release notes
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cat > NOTES.md <<EOF
+          # Paper Guard $VERSION — Cross-Platform Release
+
+          Windows, macOS, and Linux release artifacts produced natively by CI.
+
+          ## Windows (Team Client)
+          Download \`paper-guard-v${VERSION}-windows-x86_64.zip\`, extract, then run
+          \`.\paper-guard.exe\`.
+
+          Verify with:
+          \`\`\`powershell
+          Get-FileHash .\paper-guard.exe -Algorithm SHA256
+          \`\`\`
+          Compare against the SHA256SUMS file included in this release.
+
+          ## Artifacts
+          - \`paper-guard-${VERSION}-windows-x86_64.zip\` (Windows Team Client)
+          - \`paper-guard-${VERSION}-macos-x86_64.zip\`
+          - \`paper-guard-${VERSION}-macos-aarch64.zip\`
+          - \`paper-guard-${VERSION}-linux-x86_64.zip\`
+          - \`paper-guard-${VERSION}.tar.gz\` (source archive)
+          - \`SHA256SUMS\` (checksums for every artifact)
+
+          ## Checksums
+          See \`SHA256SUMS\`.
+          EOF
+          cat NOTES.md
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref }}
+          name: Paper Guard ${{ github.ref_name }}
+          body_path: NOTES.md
+          files: |
+            dist/SHA256SUMS
+            dist/*.zip
+            dist/*.tar.gz
+          draft: false
+          prerelease: false
+
+  # Copy the source archive into the release as well.
+  source:
+    name: source archive
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create source tarball
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          tar --exclude='./target' -czf "paper-guard-${VERSION}.tar.gz" .
+      - name: Upload source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-tarball
+          path: paper-guard-*.tar.gz

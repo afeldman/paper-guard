@@ -1,0 +1,16 @@
+[package]
+name = "paper-guard-report"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Human-readable presentation layer for Paper Guard review runs. Output styles are purely presentational and never alter canonical findings."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+paper-guard-core.workspace = true
+paper-guard-ledger.workspace = true
+
+[dev-dependencies]

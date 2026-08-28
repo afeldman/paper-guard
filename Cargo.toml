@@ -10,6 +10,7 @@ members = [
     "crates/paper-guard-ledger",
     "crates/paper-guard-validation",
     "crates/paper-guard-app",
+    "crates/paper-guard-report",
     "crates/paper-guard-service",
     "crates/paper-guard-client",
     "crates/paper-guard-discovery",
@@ -60,6 +61,7 @@ paper-guard-agents = { path = "crates/paper-guard-agents" }
 paper-guard-ledger = { path = "crates/paper-guard-ledger" }
 paper-guard-validation = { path = "crates/paper-guard-validation" }
 paper-guard-app = { path = "crates/paper-guard-app" }
+paper-guard-report = { path = "crates/paper-guard-report" }
 paper-guard-service = { path = "crates/paper-guard-service" }
 paper-guard-client = { path = "crates/paper-guard-client" }
 paper-guard-discovery = { path = "crates/paper-guard-discovery" }

@@ -17,6 +17,7 @@ pub struct AppConfig {
     pub llm: LlmConfig,
     pub providers: ProvidersConfig,
     pub reviewers: ReviewersConfig,
+    pub review: ReviewConfig,
     pub judge: JudgeConfig,
     pub revision: RevisionConfig,
     pub reproducibility: ReproducibilityConfig,
@@ -509,6 +510,32 @@ impl Default for ReviewersConfig {
     }
 }
 
+/// The `[review]` section — presentation-level review options.
+///
+/// These are **purely presentational** and never affect the scientific
+/// pipeline. `style` selects the human-readable output style (`neutral`,
+/// `funny`, or `insulting`), defaulting to `neutral`. The style only changes
+/// the wording of the human-readable report; the canonical findings
+/// (`findings.json`, `judge.json`, `claims.json`, the ledger) are always
+/// style-independent. The CLI `--style` flag overrides this value, and the
+/// config value overrides the `neutral` default. There is no implicit
+/// switching via environment variables.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ReviewConfig {
+    /// The presentation style for the human-readable report.
+    /// Valid values: `neutral`, `funny`, `insulting`. Defaults to `neutral`.
+    pub style: String,
+}
+
+impl Default for ReviewConfig {
+    fn default() -> Self {
+        ReviewConfig {
+            style: "neutral".into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct JudgeConfig {
@@ -885,5 +912,30 @@ preferred_service = "paper-guard.lab.local"
         assert_eq!(cfg.discovery.mode, "manual");
         assert_eq!(cfg.discovery.timeout_ms, 5000);
         assert_eq!(cfg.discovery.preferred_service, "paper-guard.lab.local");
+    }
+
+    #[test]
+    fn review_style_defaults_to_neutral() {
+        // Without any `[review]` section the style must default to `neutral`.
+        let cfg = AppConfig::default();
+        assert_eq!(cfg.review.style, "neutral");
+    }
+
+    #[test]
+    fn review_style_parses_from_config() {
+        let src = r#"
+[review]
+style = "funny"
+"#;
+        let cfg: AppConfig = toml::from_str(src).unwrap();
+        assert_eq!(cfg.review.style, "funny");
+    }
+
+    #[test]
+    fn review_style_config_roundtrips() {
+        let cfg = AppConfig::default();
+        let toml_str = toml::to_string(&cfg).unwrap();
+        let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.review.style, "neutral");
     }
 }

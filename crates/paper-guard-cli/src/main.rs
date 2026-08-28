@@ -42,6 +42,16 @@ enum Command {
         /// Non-interactively approve all required revisions.
         #[arg(long)]
         approve_all: bool,
+        /// Presentation style for the human-readable report: `neutral`,
+        /// `funny`, or `insulting` (defaults to the `[review] style` config,
+        /// then `neutral`). Style is purely presentational and never alters
+        /// the canonical findings.
+        #[arg(long)]
+        style: Option<String>,
+        /// Output format for the human-readable report: `human` (default) or
+        /// `summary`. `JSON` artifacts are always written regardless.
+        #[arg(long)]
+        output: Option<String>,
     },
     /// Run the full end-to-end workflow (review + judge + revision + render + validate).
     Run {
@@ -56,6 +66,16 @@ enum Command {
         server: Option<String>,
         #[arg(long)]
         approve_all: bool,
+        /// Presentation style for the human-readable report: `neutral`,
+        /// `funny`, or `insulting` (defaults to the `[review] style` config,
+        /// then `neutral`). Style is purely presentational and never alters
+        /// the canonical findings.
+        #[arg(long)]
+        style: Option<String>,
+        /// Output format for the human-readable report: `human` (default) or
+        /// `summary`. `JSON` artifacts are always written regardless.
+        #[arg(long)]
+        output: Option<String>,
     },
     /// Record a human decision (accept/reject/modified) on a review finding.
     /// The decision is stored as a private Review Memory candidate.
@@ -237,8 +257,12 @@ async fn main() -> anyhow::Result<()> {
             config,
             server,
             approve_all,
+            style,
+            output,
         } => {
             let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+            let style = resolve_review_style(style.as_deref(), &cfg)?;
+            let output_mode = resolve_output_mode(output.as_deref())?;
             if let Some(server_url) = resolve_server_url(&cfg, server.as_deref()) {
                 let client = build_remote_client(&cfg, &server_url)?;
                 run_remote_review(&client, &server_url, &source).await?;
@@ -249,7 +273,7 @@ async fn main() -> anyhow::Result<()> {
                 let out =
                     run::run_pipeline(&source, &cfg, &data_dir, fixture.as_deref(), approve_all)
                         .await?;
-                print_summary(&out);
+                print_run_output(&out, &source, &cfg, style, output_mode);
             }
         }
         Command::Run {
@@ -257,8 +281,12 @@ async fn main() -> anyhow::Result<()> {
             config,
             server,
             approve_all,
+            style,
+            output,
         } => {
             let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+            let style = resolve_review_style(style.as_deref(), &cfg)?;
+            let output_mode = resolve_output_mode(output.as_deref())?;
             if let Some(server_url) = resolve_server_url(&cfg, server.as_deref()) {
                 let client = build_remote_client(&cfg, &server_url)?;
                 run_remote_review(&client, &server_url, &source).await?;
@@ -269,7 +297,7 @@ async fn main() -> anyhow::Result<()> {
                 let out =
                     run::run_pipeline(&source, &cfg, &data_dir, fixture.as_deref(), approve_all)
                         .await?;
-                print_summary(&out);
+                print_run_output(&out, &source, &cfg, style, output_mode);
             }
         }
         Command::Findings { config } => {
@@ -911,6 +939,85 @@ fn fixture_response_for(_source: &str) -> Option<String> {
     None
 }
 
+/// The output mode for the human-readable report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutputMode {
+    /// The full human-readable report (default).
+    Human,
+    /// A concise terminal summary.
+    Summary,
+}
+
+/// Resolve the `--output` flag. `human` is the default; `summary` prints the
+/// existing concise one-liner. Any other value is rejected with a clear error.
+fn resolve_output_mode(output: Option<&str>) -> anyhow::Result<OutputMode> {
+    match output.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+        None | Some("human") => Ok(OutputMode::Human),
+        Some("summary") => Ok(OutputMode::Summary),
+        Some(other) => {
+            anyhow::bail!("invalid --output value `{other}`; expected `human` or `summary`")
+        }
+    }
+}
+
+/// Resolve the review presentation style with the documented priority:
+/// CLI `--style` > `[review] style` config > `neutral` default.
+/// Invalid values fail with a clear error; there is no implicit switching via
+/// environment variables.
+fn resolve_review_style(
+    cli_style: Option<&str>,
+    cfg: &AppConfig,
+) -> anyhow::Result<paper_guard_report::ReviewStyle> {
+    let given = cli_style
+        .map(str::to_string)
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            let s = cfg.review.style.trim().to_string();
+            if s.is_empty() {
+                None
+            } else {
+                Some(s)
+            }
+        })
+        .unwrap_or_else(|| "neutral".to_string());
+    paper_guard_report::parse_style_or_err(&given).map_err(|e| anyhow::anyhow!(e.to_string()))
+}
+
+/// Print the run output to the terminal. `human` renders the full
+/// human-readable review report; `summary` prints the concise one-liner. The
+/// canonical JSON artifacts are always persisted regardless of the chosen
+/// presentation mode.
+fn print_run_output(
+    out: &run::RunOutput,
+    source: &str,
+    cfg: &AppConfig,
+    style: paper_guard_report::ReviewStyle,
+    output_mode: OutputMode,
+) {
+    match output_mode {
+        OutputMode::Summary => print_summary(out),
+        OutputMode::Human => {
+            let provider = match cfg.llm.provider.as_str() {
+                "openai-compatible" => "OpenAI-compatible".to_string(),
+                other => other.to_string(),
+            };
+            let model = match cfg.llm.provider.as_str() {
+                "openai-compatible" => cfg.providers.openai_compatible.model.clone(),
+                _ => String::new(),
+            };
+            let header = paper_guard_report::ReportHeader {
+                paper: source.to_string(),
+                run: out.run.run_id.clone(),
+                mode: "local".to_string(),
+                provider,
+                model,
+            };
+            let report = paper_guard_report::build_human_report(&out.run, &header, style);
+            print!("{report}");
+        }
+    }
+}
+
 /// Print a concise summary after a run.
 fn print_summary(out: &run::RunOutput) {
     println!("run {}: {:?}", out.run.run_id, out.run.status);
@@ -967,4 +1074,91 @@ fn list_findings(data_dir: &str) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a config with a given `[review] style` (or the default).
+    fn cfg_with_style(style: &str) -> AppConfig {
+        let mut cfg = AppConfig::default();
+        cfg.review.style = style.to_string();
+        cfg
+    }
+
+    #[test]
+    fn style_defaults_to_neutral_when_no_cli_and_no_config() {
+        // No CLI flag + default config => neutral.
+        let cfg = AppConfig::default();
+        assert_eq!(
+            resolve_review_style(None, &cfg).unwrap(),
+            paper_guard_report::ReviewStyle::Neutral
+        );
+    }
+
+    #[test]
+    fn cli_style_flag_is_honored() {
+        let cfg = cfg_with_style("funny");
+        // CLI overrides config.
+        assert_eq!(
+            resolve_review_style(Some("neutral"), &cfg).unwrap(),
+            paper_guard_report::ReviewStyle::Neutral
+        );
+        assert_eq!(
+            resolve_review_style(Some("funny"), &cfg).unwrap(),
+            paper_guard_report::ReviewStyle::Funny
+        );
+        assert_eq!(
+            resolve_review_style(Some("insulting"), &cfg).unwrap(),
+            paper_guard_report::ReviewStyle::Insulting
+        );
+    }
+
+    #[test]
+    fn config_style_is_used_when_no_cli_flag() {
+        // No CLI flag => config wins over default.
+        assert_eq!(
+            resolve_review_style(None, &cfg_with_style("funny")).unwrap(),
+            paper_guard_report::ReviewStyle::Funny
+        );
+        assert_eq!(
+            resolve_review_style(None, &cfg_with_style("insulting")).unwrap(),
+            paper_guard_report::ReviewStyle::Insulting
+        );
+    }
+
+    #[test]
+    fn cli_style_overrides_config() {
+        // Config = "funny", CLI = "neutral" => neutral wins (CLI > config).
+        let cfg = cfg_with_style("funny");
+        let got = resolve_review_style(Some("neutral"), &cfg).unwrap();
+        assert_eq!(got, paper_guard_report::ReviewStyle::Neutral);
+    }
+
+    #[test]
+    fn invalid_cli_style_is_rejected() {
+        let cfg = AppConfig::default();
+        assert!(resolve_review_style(Some("something-weird"), &cfg).is_err());
+    }
+
+    #[test]
+    fn invalid_config_style_is_rejected() {
+        let cfg = cfg_with_style("bogus");
+        assert!(resolve_review_style(None, &cfg).is_err());
+    }
+
+    #[test]
+    fn output_mode_resolves_human_default_and_summary() {
+        assert_eq!(resolve_output_mode(None).unwrap(), OutputMode::Human);
+        assert_eq!(
+            resolve_output_mode(Some("human")).unwrap(),
+            OutputMode::Human
+        );
+        assert_eq!(
+            resolve_output_mode(Some("summary")).unwrap(),
+            OutputMode::Summary
+        );
+        assert!(resolve_output_mode(Some("bogus")).is_err());
+    }
 }

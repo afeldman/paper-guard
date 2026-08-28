@@ -44,6 +44,15 @@ on:
       ref:
         type: string
         required: true
+      # Skip `cargo fmt --check` for historical backfills. Historic tags were
+      # written under an older rustfmt whose formatting differs from today's
+      # stable toolchain; enforcing the modern format would require editing the
+      # immutable tagged code (which is forbidden). New/auto releases keep the
+      # format gate on.
+      skip_fmt_check:
+        type: boolean
+        default: false
+        required: false
 
 # Least-privilege by default: every job inherits contents:read. Only the
 # publishing `release` job is granted the elevated contents:write it needs to
@@ -116,6 +125,7 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
       - name: Format check
+        if: ${{ !inputs.skip_fmt_check }}
         run: cargo fmt --all -- --check
       - name: Test (workspace)
         run: cargo test --workspace

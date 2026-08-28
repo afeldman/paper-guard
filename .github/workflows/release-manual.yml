@@ -100,5 +100,9 @@ jobs:
     with:
       tag_name: ${{ needs.verify.outputs.tag }}
       ref: ${{ needs.verify.outputs.ref }}
+      # Historical tags predate today's rustfmt rules; an old tag would fail a
+      # modern `cargo fmt --check` and cannot be reformatted (immutable). Skip
+      # the format gate for manual backfills only; automatic releases keep it.
+      skip_fmt_check: true
     permissions:
       contents: write

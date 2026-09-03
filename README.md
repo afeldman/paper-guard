@@ -1069,7 +1069,7 @@ trivy fs .
 ```
 
 The test suite is fully offline — no test makes a real API call. As of the
-v1.1.2 release the workspace has **389 passing tests** with a clean
+v1.1.3 release the workspace has **389 passing tests** with a clean
 `clippy -D warnings` and clean `fmt --check`. An optional live end-to-end
 harness runs against a real endpoint only when explicitly enabled and never in
 CI (see [`docs/architecture.md`](docs/architecture.md)).
@@ -1094,7 +1094,7 @@ The repository is guarded continuously:
 
 ## Version / release status
 
-Current release: **v1.1.2** — the first complete researcher-facing release.
+Current release: **v1.1.3** — the first complete researcher-facing release.
 
 ### v1.0 highlights
 

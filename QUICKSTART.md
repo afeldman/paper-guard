@@ -12,11 +12,10 @@ archive for your machine, extract it, and run it.
 
 | Platform       | Architecture | Rust target                | Archive                                              |
 | -------------- | ------------ | -------------------------- | ---------------------------------------------------- |
-| macOS          | ARM64        | `aarch64-apple-darwin`      | `paper-guard-v1.1.2-aarch64-apple-darwin.zip`        |
-| macOS          | x86_64       | `x86_64-apple-darwin`       | `paper-guard-v1.1.2-x86_64-apple-darwin.zip`         |
-| Linux          | ARM64        | `aarch64-unknown-linux-gnu` | `paper-guard-v1.1.2-aarch64-unknown-linux-gnu.zip`   |
-| Linux          | x86_64       | `x86_64-unknown-linux-gnu`  | `paper-guard-v1.1.2-x86_64-unknown-linux-gnu.zip`    |
-| Windows        | x86_64       | `x86_64-pc-windows-msvc`    | `paper-guard-v1.1.2-x86_64-pc-windows-msvc.zip`      |
+| macOS          | ARM64        | `aarch64-apple-darwin`      | `paper-guard-v1.1.3-aarch64-apple-darwin.zip`        |
+| Linux          | ARM64        | `aarch64-unknown-linux-gnu` | `paper-guard-v1.1.3-aarch64-unknown-linux-gnu.zip`   |
+| Linux          | x86_64       | `x86_64-unknown-linux-gnu`  | `paper-guard-v1.1.3-x86_64-unknown-linux-gnu.zip`    |
+| Windows        | x86_64       | `x86_64-pc-windows-msvc`    | `paper-guard-v1.1.3-x86_64-pc-windows-msvc.zip`      |
 
 Every archive contains the binary (`paper-guard`, or `paper-guard.exe` on
 Windows), this `QUICKSTART.md`, and the `LICENSE`. Release artifacts are

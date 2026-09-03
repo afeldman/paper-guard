@@ -4,7 +4,7 @@ All notable changes to Paper Guard are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [1.1.2] — 2026-09-03
+## [1.1.3] — 2026-09-03
 
 ### Fixed
 - **Deterministic bibliography cache eviction**: the bounded on-disk cache

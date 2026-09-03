@@ -1257,11 +1257,16 @@ pub(crate) fn resolve_editor() -> Option<Vec<String>> {
     resolve_platform_editor()
 }
 
-/// Platform-default editor command (program + args; the file path is appended
-/// by the caller).
+/// Windows: use `notepad.exe` when it is present on `$PATH` (mirrors the
+/// candidate probing of the Unix variants); otherwise `None` so the caller
+/// reports that no editor is available.
 #[cfg(target_os = "windows")]
 fn resolve_platform_editor() -> Option<Vec<String>> {
-    Some(vec!["notepad.exe".to_string()])
+    if command_on_path("notepad.exe") {
+        Some(vec!["notepad.exe".to_string()])
+    } else {
+        None
+    }
 }
 
 /// macOS: prefer a blocking terminal editor when present; otherwise `open -t`

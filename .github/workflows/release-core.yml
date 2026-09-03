@@ -154,11 +154,6 @@ jobs:
             target: aarch64-apple-darwin
             bin: paper-guard
             ext: ""
-          # macOS x86_64 — native Intel macOS runner.
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
-            bin: paper-guard
-            ext: ""
           # Linux ARM64 — reproduced via `cross` (pinned, containerised toolchain).
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu

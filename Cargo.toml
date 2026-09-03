@@ -48,7 +48,7 @@ rust-loguru = "0.1"
 async-trait = "0.1"
 reqwest = { version = "0.13", features = ["json", "rustls", "rustls-native-certs"] }
 wiremock = "0.6"
-axum = "0.7"
+axum = "0.8"
 tower = "0.5"
 base64 = "0.23"
 dirs = "6"

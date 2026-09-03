@@ -4,6 +4,19 @@ All notable changes to Paper Guard are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.1.2] — 2026-09-03
+
+### Fixed
+- **Deterministic bibliography cache eviction**: the bounded on-disk cache
+  evicted by filesystem mtime (truncated to seconds), falling back to
+  filesystem enumeration order on ties — so which entry was evicted could
+  differ between local machines and CI. Eviction now uses the canonical
+  nanosecond `stored_at` insertion timestamp with a deterministic filename
+  tie-break, and is platform-independent.
+- **Windows x86_64 release build**: `resolve_platform_editor` on Windows now
+  probes for `notepad.exe` via `command_on_path`, fixing the `-D warnings`
+  dead-code failure that blocked the v1.1.1 release pipeline.
+
 ## [1.1.0] — 2026-09-03
 
 ### Added

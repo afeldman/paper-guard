@@ -15,6 +15,13 @@
 #   - The `ref` input must point at an immutable tag; this workflow checks out
 #     exactly that ref and builds from the resulting commit. It never builds
 #     from an arbitrary default branch.
+#   - The tag version (e.g. "1.1.4" from "v1.1.4") must EXACTLY equal the
+#     canonical Cargo workspace version derived via `cargo metadata` (all
+#     workspace crates inherit [workspace.package] version). A release whose
+#     tag version and Cargo version disagree (e.g. a missing version bump) is
+#     rejected in the resolve job before anything is built. The per-platform
+#     smoke tests additionally assert `paper-guard --version` equals that same
+#     version, so tag == Cargo == binary is enforced end to end.
 #   - Artifacts are versioned by the tag (e.g. v1.0.0 -> paper-guard-v1.0.0).
 #   - Archives are ZIP files named by the Rust target triple so the intended
 #     platform is unambiguous, e.g. paper-guard-v1.0.0-aarch64-apple-darwin.zip.
@@ -69,6 +76,16 @@ jobs:
   # Resolve the exact tag -> commit mapping once, on a single job, so every
   # downstream job knows the precise commit it is building and the human can
   # confirm "requested tag = resolved commit" in the workflow output.
+  #
+  # Version resolution is Cargo-based, never grep-based: a naive grep over
+  # Cargo.toml matches EVERY `version = "..."` occurrence (workspace members,
+  # old-style per-crate [package] versions, path-dependency entries) and can
+  # yield MULTIPLE lines. Writing a multi-line value into $GITHUB_OUTPUT
+  # corrupts the file-command format ("Unable to process file command
+  # 'output' / Invalid format '...'"). `cargo metadata --no-deps` reports
+  # exactly the workspace crates; all of them inherit [workspace.package]
+  # version, so the parser requires exactly ONE distinct version and
+  # hard-fails otherwise. CARGO_VERSION is therefore always exactly one value.
   # ---------------------------------------------------------------------------
   resolve:
     name: resolve tag -> commit
@@ -82,16 +99,35 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
-      - name: Resolve version + commit
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Resolve tag version + Cargo version + commit
         id: meta
         run: |
-          version="${TAG_NAME#v}"
-          [ -n "$version" ] || { echo "empty version"; exit 1; }
+          set -euo pipefail
+          tag_version="${TAG_NAME#v}"
+          [ -n "$tag_version" ] || { echo "::error::empty version from tag ${TAG_NAME}"; exit 1; }
           commit="$(git rev-parse HEAD)"
-          echo "requested tag  : ${TAG_NAME}"
-          echo "resolved commit : ${commit}"
-          echo "version         : ${version}"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag:             ${TAG_NAME}"
+          echo "resolved:        ${tag_version}"
+          echo "resolved commit: ${commit}"
+          # Canonical Cargo workspace version via `cargo metadata` (single
+          # value by construction: every workspace member inherits
+          # [workspace.package] version, so the distinct set must have exactly
+          # one element; the parser exits non-zero otherwise).
+          cargo_version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; vs=sorted({p["version"] for p in json.load(sys.stdin)["packages"]}); (sys.exit("error: expected exactly one workspace member version, found: " + (", ".join(vs) if vs else "<none>")) if len(vs) != 1 else print(vs[0]))')"
+          [ -n "$cargo_version" ] || { echo "::error::could not determine Cargo workspace version"; exit 1; }
+          echo "cargo metadata:  ${cargo_version}"
+          # Hard gate: tag version == Cargo workspace version. A release whose
+          # tag, Cargo version, and binary version disagree is never accepted;
+          # a mismatch means the version bump commit is missing or the tag was
+          # created on the wrong commit.
+          if [ "${tag_version}" != "${cargo_version}" ]; then
+            echo "::error::version mismatch: tag ${TAG_NAME} resolves to '${tag_version}' but the checked-out Cargo workspace version is '${cargo_version}' - refusing to release (version bump missing?)"
+            exit 1
+          fi
+          echo "version:         ${tag_version}  (tag == Cargo workspace version)"
+          echo "version=${tag_version}" >> "$GITHUB_OUTPUT"
           echo "commit=${commit}" >> "$GITHUB_OUTPUT"
         env:
           TAG_NAME: ${{ inputs.tag_name }}
@@ -239,7 +275,9 @@ jobs:
           set -euo pipefail
           BIN="target/${{ matrix.target }}/release/${{ matrix.bin }}${{ matrix.ext }}"
           test -x "$BIN"
-          # Version + help are universal across all released tags.
+          # Hard binary-version gate: the binary must report exactly the
+          # resolve version, which the resolve job has already proven equal to
+          # the Cargo workspace version (tag == Cargo == binary).
           VERSION_ACTUAL="$($BIN --version)"
           echo "version: $VERSION_ACTUAL"
           case "$VERSION_ACTUAL" in
@@ -305,7 +343,16 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $exe = "target\${{ matrix.target }}\release\${{ matrix.bin }}${{ matrix.ext }}"
           Test-Path $exe | Out-Host
-          & $exe --version
+          # Hard binary-version gate (mirrors the POSIX smoke test): the binary
+          # must report exactly the resolve version, which the resolve job has
+          # already proven equal to the Cargo workspace version.
+          $expected = "paper-guard ${{ needs.resolve.outputs.version }}"
+          $versionActual = (& $exe --version | Out-String).Trim()
+          Write-Host "version: $versionActual"
+          if ($versionActual -ne $expected) {
+            Write-Error "version mismatch: binary reports '$versionActual', expected '$expected'"
+            exit 1
+          }
           & $exe --help | Out-Null
           $null = & $exe info 2>$null
           if ($LASTEXITCODE -eq 0) {
@@ -520,7 +567,6 @@ jobs:
           | macOS ARM64 | aarch64-apple-darwin | paper-guard-v${v}-aarch64-apple-darwin.zip |
           | macOS x86_64 | x86_64-apple-darwin | paper-guard-v${v}-x86_64-apple-darwin.zip |
           | Linux ARM64 | aarch64-unknown-linux-gnu | paper-guard-v${v}-aarch64-unknown-linux-gnu.zip |
-          | Linux x86_64 | x86_64-unknown-linux-gnu | paper-guard-v${v}-x86_64-unknown-linux-gnu.zip |
           | Windows x86_64 | x86_64-pc-windows-msvc | paper-guard-v${v}-x86_64-pc-windows-msvc.zip |
 
           Each archive contains the binary (paper-guard or paper-guard.exe on
@@ -550,7 +596,6 @@ jobs:
           ## Artifacts
 
           - paper-guard-v${v}-aarch64-apple-darwin.zip
-          - paper-guard-v${v}-x86_64-apple-darwin.zip
           - paper-guard-v${v}-aarch64-unknown-linux-gnu.zip
           - paper-guard-v${v}-x86_64-unknown-linux-gnu.zip
           - paper-guard-v${v}-x86_64-pc-windows-msvc.zip

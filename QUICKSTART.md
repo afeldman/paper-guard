@@ -12,11 +12,11 @@ archive for your machine, extract it, and run it.
 
 | Platform       | Architecture | Rust target                | Archive                                              |
 | -------------- | ------------ | -------------------------- | ---------------------------------------------------- |
-| macOS          | ARM64        | `aarch64-apple-darwin`      | `paper-guard-v1.0.0-aarch64-apple-darwin.zip`        |
-| macOS          | x86_64       | `x86_64-apple-darwin`       | `paper-guard-v1.0.0-x86_64-apple-darwin.zip`         |
-| Linux          | ARM64        | `aarch64-unknown-linux-gnu` | `paper-guard-v1.0.0-aarch64-unknown-linux-gnu.zip`   |
-| Linux          | x86_64       | `x86_64-unknown-linux-gnu`  | `paper-guard-v1.0.0-x86_64-unknown-linux-gnu.zip`    |
-| Windows        | x86_64       | `x86_64-pc-windows-msvc`    | `paper-guard-v1.0.0-x86_64-pc-windows-msvc.zip`      |
+| macOS          | ARM64        | `aarch64-apple-darwin`      | `paper-guard-v1.1.0-aarch64-apple-darwin.zip`        |
+| macOS          | x86_64       | `x86_64-apple-darwin`       | `paper-guard-v1.1.0-x86_64-apple-darwin.zip`         |
+| Linux          | ARM64        | `aarch64-unknown-linux-gnu` | `paper-guard-v1.1.0-aarch64-unknown-linux-gnu.zip`   |
+| Linux          | x86_64       | `x86_64-unknown-linux-gnu`  | `paper-guard-v1.1.0-x86_64-unknown-linux-gnu.zip`    |
+| Windows        | x86_64       | `x86_64-pc-windows-msvc`    | `paper-guard-v1.1.0-x86_64-pc-windows-msvc.zip`      |
 
 Every archive contains the binary (`paper-guard`, or `paper-guard.exe` on
 Windows), this `QUICKSTART.md`, and the `LICENSE`. Release artifacts are
@@ -164,6 +164,33 @@ structured_output = "json_schema"
 Secrets (API keys) are always read from the environment, never stored in
 config, logs, or the ledger. Local providers such as Ollama and LM Studio
 normally need no API key at all.
+
+## User configuration, setup and editable prompts (optional)
+
+Paper Guard works with zero configuration. When you want a per-user setup
+(configuration, editable reviewer prompts, rolling logs), run:
+
+```text
+paper-guard setup
+```
+
+This creates `~/.paper-guard/` (`config/config.toml`, `config/prompts/`,
+`logs/`, `data/`) — idempotently and without overwriting existing files.
+Every command then automatically prefers the user configuration when present
+(`--config` always wins):
+
+```text
+paper-guard config show          # effective configuration (secrets redacted)
+paper-guard config edit          # open the user config in $VISUAL/$EDITOR
+paper-guard prompts list         # which prompt source each reviewer uses
+```
+
+Reviewer prompts live in `~/.paper-guard/config/prompts/` as plain Markdown
+files (`scientific.md`, `adversarial.md`, …). Edit them and run the next
+review — **prompt changes take effect without recompiling Paper Guard**. The
+binary always contains the built-in defaults as fallback; missing prompt
+files are not an error. Technical logs rotate automatically in
+`~/.paper-guard/logs/paper-guard.log` (10 MiB × 5 files, oldest deleted).
 
 ---
 

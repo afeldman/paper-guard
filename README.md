@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.png" alt="Paper Guard" width="150">
+</p>
+
 # Paper Guard
 
 > Local AI-assisted pre-review for scientific papers.
@@ -289,6 +293,12 @@ build profile. (Homebrew, winget, scoop, and similar package managers are
 | `paper-guard report [RUN]` | Emit a summary report for a run (defaults to latest). | No | No |
 | `paper-guard feedback <RUN> <FINDING> --decision <accept\|reject\|modified>` | Record a human decision on a finding (stored as a private Review Memory candidate). | No | No |
 | `paper-guard memory …` | List / show / approve / reject / search approved review memory. | No | No |
+| `paper-guard prompts init` | Copy the embedded default reviewer prompts into the prompt directory. Never overwrites existing files. | No | No |
+| `paper-guard prompts list` | Show which prompt source each reviewer role resolves to (`external` / `embedded-default`). Never prints prompt contents. | No | No |
+| `paper-guard setup` | Create `~/.paper-guard/{config,prompts,logs,data}`, write a default `config.toml`, export default prompts. Idempotent. | No | No |
+| `paper-guard config show` | Print the effective configuration (user config + defaults); secrets are redacted. | No | No |
+| `paper-guard config edit` | Open the user configuration in `$VISUAL`/`$EDITOR` (or a platform default). | No | No |
+| `paper-guard bibliography <paper>` | Verify bibliography metadata against scholarly sources (arXiv; Google Scholar reports `Unavailable`). Off unless `[bibliography] enabled = true`; `--output json` and `--clear-cache` supported. | No | Yes (opt-in) |
 
 Minimal examples:
 
@@ -616,9 +626,359 @@ implemented for:
 - **Provider configuration** — set in `config` (`[llm] provider` and
   `[providers.openai-compatible]`); the default provider is the offline
   `mock`.
+- **Reviewer prompts** — an external prompt file (resolved through
+  `[prompts] directory`) overrides the embedded default compiled into the
+  binary.
+
+**Configuration file resolution.** When a command does not receive an explicit
+`--config`, Paper Guard uses the canonical user configuration when it exists:
+
+```text
+CLI arguments                     (highest priority)
+explicit --config file
+~/.paper-guard/config/config.toml (user configuration)
+built-in defaults
+```
+
+A missing user configuration is **not an error** — `paper-guard review paper.tex`
+works out of the box on a fresh machine. Run `paper-guard setup` to create the
+user layout, or `paper-guard config edit` to open the user configuration in
+your editor.
 
 Secrets are always referenced by environment-variable **name** in config (e.g.
 `PAPER_GUARD_TOKEN`), never stored in the config file or logs.
+
+---
+
+## User configuration, setup & rolling logs
+
+Paper Guard owns one canonical per-user directory, resolved through the
+platform home directory (`%USERPROFILE%\.paper-guard` on Windows — never a
+hard-coded `/Users/...`, `/home/...` or `C:\...` path):
+
+```text
+~/.paper-guard/
+├── config/
+│   ├── config.toml          # user configuration (optional)
+│   └── prompts/             # editable reviewer prompts (optional)
+├── logs/                    # rolling technical logs (paper-guard.log, .1 … .5)
+└── data/                    # per-user review data (opt-in, see below)
+```
+
+### `paper-guard setup`
+
+Creates the layout above, writes a default `config.toml` and exports the
+embedded default reviewer prompts into `config/prompts/`. **Idempotent** —
+existing user files are never overwritten, so running it repeatedly (or after
+editing prompts/config) is safe:
+
+```bash
+paper-guard setup
+```
+
+```text
+Paper Guard Setup
+ok /Users/you/.paper-guard
+ok /Users/you/.paper-guard/config
+ok /Users/you/.paper-guard/config/prompts
+ok /Users/you/.paper-guard/logs
+ok /Users/you/.paper-guard/data
+ok /Users/you/.paper-guard/config/config.toml (created with built-in defaults)
+ok 5 reviewer prompt file(s) exported to /Users/you/.paper-guard/config/prompts
+Paper Guard is ready.
+```
+
+Setup is optional: the binary works with zero configuration. It only exists to
+make the built-in defaults visible and editable.
+
+### `paper-guard config show` / `config edit`
+
+```bash
+paper-guard config show      # effective configuration (secrets redacted)
+paper-guard config edit      # open ~/.paper-guard/config/config.toml in $VISUAL/$EDITOR
+```
+
+`config show` prints the effective configuration after applying the resolution
+order above. **Secrets are never printed**: values that look like API keys,
+tokens, JWTs, bearer credentials, private keys etc. are replaced with
+`[redacted]`, and Paper Guard never reads environment variables into config
+output. `config edit` uses `$VISUAL`, then `$EDITOR`, then a platform default
+editor; if no editor can be found you get a clear error telling you to set
+`$EDITOR`.
+
+### `~/.paper-guard/data`
+
+The per-user data directory is created by `setup` for users who prefer a
+user-owned location for review artifacts. The default remains the
+project-relative `.paper-guard` directory for historical compatibility; set
+`[reproducibility] data_dir = "~/.paper-guard/data"` (or
+`[service] data_dir`) to use it.
+
+### Rolling technical logs
+
+Technical logs are mirrored to `~/.paper-guard/logs/paper-guard.log` with
+size-based rotation:
+
+```text
+max file size:    10 MiB per file
+max rotated files: 5   (paper-guard.log.1 … paper-guard.log.5)
+≈ max local usage: 60 MiB
+```
+
+Rotation is automatic and thread-safe: when the current file reaches 10 MiB it
+is renamed to `.1` (shifting older files up) and the oldest `.5` is deleted —
+no manual cleanup needed. Logs contain technical diagnostics only (provider,
+model, reviewer, stage, run id, status, finding count, error category) and
+never manuscript contents or secrets; a defense-in-depth scrubber additionally
+masks credential-looking tokens in the file. The human-readable CLI output on
+stdout is unchanged — the log file is a separate technical channel.
+
+---
+
+## External reviewer prompts
+
+Reviewer prompts are the only LLM prompts Paper Guard uses: the five reviewers
+(`scientific`, `adversarial`, `evidence`, `references`, `figures`) each receive
+a system prompt whose *role instructions* can be edited as plain Markdown files
+on disk.
+
+> **Prompt changes take effect without recompiling Paper Guard.** There is no
+> rebuild step: edit a prompt file and run the next review — the new text is
+> picked up automatically.
+
+### Where prompts live
+
+External prompts live in the prompt directory, which defaults to a
+cross-platform home-directory path:
+
+```text
+~/.paper-guard/config/prompts/
+```
+
+(`%USERPROFILE%\.paper-guard\config\prompts\` on Windows.) The directory is resolved
+through the platform home directory — never hard-coded per-OS paths, and a
+literal `~` in a configured path is expanded portably. Override it in config:
+
+```toml
+[prompts]
+directory = "~/my-custom-prompts"   # optional; tilde is expanded
+```
+
+### Resolution order
+
+For each reviewer role the loader uses:
+
+1. the external file `<prompt-directory>/<role>.md`, if present;
+2. otherwise the **embedded default** compiled into the binary.
+
+A fresh install works with no configuration at all: no prompt directory exists,
+so every role resolves to its embedded default and the binary stays fully
+self-contained (no network, no missing-asset failure).
+
+**Fallback rule.** A *missing* prompt file falls back to the embedded default.
+A file that *exists* but cannot be read (permission denied, I/O error, not a
+regular file, or a symlink that resolves outside the prompt directory) is a
+hard error — a deliberately broken external prompt is never silently replaced
+by another prompt.
+
+### What a prompt file controls
+
+Each `<role>.md` file replaces the role-instructions paragraph of that
+reviewer's system prompt. Paper Guard always composes the fixed wrapper
+(`You are …`), the non-negotiable **SCIENTIFIC INTEGRITY RULE** preamble, and
+the authoritative arrangement note around your text in code, so a prompt file
+cannot silently remove the integrity guardrails. The document under review is
+appended by code in the user message — there are no template placeholders to
+keep in sync.
+
+The Judge and the revision engine are deterministic code, not LLM agents, so
+they have **no** prompt files (`judge.md` / `revision.md` do not exist and are
+never loaded).
+
+### Getting started
+
+Copy the embedded defaults into the prompt directory (existing files are never
+overwritten):
+
+```bash
+paper-guard prompts init
+```
+
+```text
+Initialized Paper Guard prompts in /Users/you/.paper-guard/config/prompts
+  scientific.md
+  adversarial.md
+  evidence.md
+  references.md
+  figures.md
+Existing files were left unchanged.
+```
+
+See which source each role currently resolves to (never prints prompt
+contents):
+
+```bash
+paper-guard prompts list
+```
+
+```text
+Prompts:
+  directory: /Users/you/.paper-guard/config/prompts
+  scientific: embedded-default
+  adversarial: external
+  evidence: embedded-default
+  references: embedded-default
+  figures: embedded-default
+```
+
+`paper-guard info` prints the same prompt block, and
+`paper-guard diagnostics --paths` shows the resolved default prompt directory.
+
+### Changing a prompt
+
+Edit a copied file and run the next review — no rebuild:
+
+```bash
+$EDITOR ~/.paper-guard/config/prompts/scientific.md
+paper-guard review paper.tex --style neutral
+```
+
+For example, an edited `scientific.md` could look like:
+
+```markdown
+Focus on statistical rigor above all: check effect sizes, confidence
+intervals, multiple-comparison handling, and whether the conclusions
+follow from the reported numbers. Flag over-strong wording.
+```
+
+A prompt file is **untrusted configuration** with the same trust boundary as
+`paper-guard.toml`: it can steer a reviewer's attention, but it cannot create
+findings directly, cannot bypass schema/domain validation, the Judge, the
+evidence system, or the ledger, and is never executed.
+
+### Reproducibility: prompt provenance in run records
+
+Every review records which prompt each agent actually used. Each agent outcome
+in the ledger (`ledger.json` / the run record) carries:
+
+```json
+"prompt_usage": {
+  "prompt": "scientific",
+  "source": "external",
+  "sha256": "a3f2…",
+  "path": "/Users/you/.paper-guard/config/prompts/scientific.md"
+}
+```
+
+- `source` is `embedded-default` or `external`;
+- `sha256` is a stable SHA-256 of the full composed system prompt text that was
+  sent to the model for that role — the same prompt content always produces the
+  same hash, and any change produces a different hash;
+- prompt **contents are never stored** in the ledger, only provenance.
+
+A run can therefore always be audited later for *which* prompt actually
+influenced it, while the canonical RunRecord and its integrity guarantees stay
+unchanged.
+
+---
+
+## Bibliography verification (optional)
+
+Paper Guard can **optionally** verify the bibliographic metadata of a paper's
+references against scholarly sources. This is the **Bibliography Verification
+Layer** — a clearly separated, additive stage of the review run:
+
+```text
+Paper
+  │
+  └── Bibliography ──► BibliographyVerifier
+                          ├── arXiv          (real, opt-in network)
+                          ├── Google Scholar (Unavailable slot — see below)
+                          └── mock           (offline test/demo double)
+                          ▼
+                      canonical result per reference
+                          ▼
+                      RunRecord JSON / human report
+```
+
+It is **disabled by default** — every run stays offline unless you opt in:
+
+```toml
+[bibliography]
+enabled = true               # master switch (default: false)
+provider = "arxiv"           # "arxiv" (real) or "mock" (offline test double)
+timeout_seconds = 15         # per-request timeout
+
+[bibliography.arxiv]
+enabled = true               # the real arXiv provider (fixed endpoint only)
+
+[bibliography.google_scholar]
+enabled = false              # see the Google Scholar note below
+
+[bibliography.cache]
+enabled = true
+max_entries = 200            # bounded, oldest entries evicted first
+max_bytes = 8388608          # 8 MiB total
+```
+
+Run a pure bibliography check without a full review:
+
+```bash
+paper-guard bibliography paper.tex
+paper-guard bibliography paper.tex --output json
+paper-guard bibliography --clear-cache          # delete the local response cache
+```
+
+Or include it in a review (`review`/`run` also accept `--bibliography` to
+enable it for that run without editing the config). Results land in the
+canonical RunRecord JSON under `"bibliography": [...]` and appear as a
+"Bibliography Verification" section in the human-readable report.
+
+### What is verified — and what is not
+
+The layer verifies **bibliographic metadata identity**: title, authors, year,
+venue, DOI, arXiv id. The statuses are:
+
+| Status                | Meaning                                                        |
+|-----------------------|----------------------------------------------------------------|
+| `verified`            | Source entry matches the cited metadata; no contradicting field |
+| `likely_match`        | Strong candidate; minor wording/venue differences               |
+| `partial_match`       | Weak candidate; some metadata overlaps                          |
+| `conflicting_metadata`| Candidate found whose metadata conflicts (year/DOI/arXiv/authors) |
+| `not_found`           | No usable candidate found                                       |
+| `unavailable`         | Source not reachable/not usable (network, timeout, disabled)    |
+| `not_checked`         | Deliberately not verified                                       |
+
+Every result keeps the original citation unchanged and lists explicit
+`mismatches[]`. Paper Guard **never auto-corrects** a bibliography.
+
+> **Bibliography verification checks bibliographic metadata. It does not prove
+> that a cited scientific statement is substantively correct.**
+
+### Google Scholar
+
+Paper Guard deliberately does **not** scrape Google Scholar: there is no
+stable official API for this use case, HTML scraping is fragile and violates
+the service's terms of use, and CAPTCHA/rate-limit evasion is out of bounds.
+The provider abstraction exists and the Scholar slot returns an honest
+`Unavailable` result with an explanatory note whenever it is enabled. Stable
+scholarly aggregators with public APIs (Crossref, OpenAlex, DataCite) are
+technically viable future providers behind the same interface.
+
+### Privacy, network and cache
+
+* Bibliography verification is opt-in and sends **only the bibliographic
+  metadata** of each reference (title, authors, year, arXiv id, DOI). Full
+  manuscript text is never transmitted.
+* The arXiv endpoint is fixed inside the binary and is not configurable
+  (no SSRF surface). Requests are bounded in size and time.
+* Results are cached locally under `<data_dir>/bibliography-cache/` as plain,
+  bounded JSON files (key = SHA-256 of source + query). The cache is
+  transparent (`from_cache: true`), deletable (`--clear-cache`), and never
+  stores transient failures. It has no scientific semantics — the canonical
+  RunRecord JSON remains the single source of truth.
+* The `mock` provider is an offline deterministic test/demo double; every
+  result is clearly labelled and must never be used as real verification.
 
 ---
 
@@ -709,7 +1069,7 @@ trivy fs .
 ```
 
 The test suite is fully offline — no test makes a real API call. As of the
-v1.0.0 release the workspace has **291 passing tests** with a clean
+v1.1.0 release the workspace has **385 passing tests** with a clean
 `clippy -D warnings` and clean `fmt --check`. An optional live end-to-end
 harness runs against a real endpoint only when explicitly enabled and never in
 CI (see [`docs/architecture.md`](docs/architecture.md)).
@@ -734,7 +1094,7 @@ The repository is guarded continuously:
 
 ## Version / release status
 
-Current release: **v1.0.0** — the first complete researcher-facing release.
+Current release: **v1.1.0** — the first complete researcher-facing release.
 
 ### v1.0 highlights
 

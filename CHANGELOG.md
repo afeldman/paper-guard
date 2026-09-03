@@ -4,7 +4,94 @@ All notable changes to Paper Guard are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [1.0.0] — 2026-08-28
+## [1.1.0] — 2026-09-03
+
+### Added
+- **Logo integration**: Added official Paper Guard logo to docs/logo.png and integrated into GUI and documentation
+- **External Prompt System**: 
+  - `paper-guard prompts init` command to initialize external prompts directory
+  - `paper-guard prompts list` command to list available external prompts
+  - Support for loading prompts from `~/.paper-guard/config/prompts/`
+  - Prompt hashing in ledger for integrity verification (no prompt content stored)
+- **User Configuration**:
+  - `paper-guard setup` command to initialize user configuration
+  - `paper-guard config show` to display current configuration
+  - `paper-guard config edit` to edit user configuration
+  - Configuration stored in `~/.paper-guard/config/config.toml`
+  - Prompts stored in `~/.paper-guard/config/prompts/`
+- **Rolling File Logger**:
+  - Log files stored in `~/.paper-guard/logs/`
+  - 10 MiB per file, maximum 5 old files plus current
+  - JSON Lines format with secret scrubbing
+  - Human-readable console output preserved
+- **Enhanced Bibliography System**:
+  - `paper-guard bibliography` command
+  - arXiv provider for fetching bibliographic metadata
+  - Mock provider for testing
+  - Google Scholar as honest `unavailable` slot (no scraping)
+  - Local caching of bibliography results
+  - Metadata verification without automatic correction
+- **Review System Improvements**:
+  - Five reviewer types: scientific, adversarial, evidence, references, figures
+  - Judge system for consolidating reviewer feedback
+  - Evidence system with domain validation
+  - Revision engine with approval gating
+  - Ledger for tracking review runs
+  - Claims and findings tracking
+- **Local LLM Support**:
+  - OpenAI-compatible provider interface
+  - LM Studio integration with structured output
+  - Ollama-compatible OpenAI API support
+  - `structured_output` support for `json_object` and `json_schema`
+  - Strict JSON Schema validation with no fallback on invalid schema
+  - Reviewer-side domain validation
+- **Report Output Formats**:
+  - Human-readable output (default)
+  - JSON output (--output json)
+  - Summary output (--output summary)
+  - Three presentation styles: neutral, funny, insulting
+  - Insulting style never attacks author personally
+- **Input Format Support**:
+  - `.tex` files as primary input
+  - `\\input{...}` and `\\include{...}` directive support
+  - Support for nested includes
+  - Relative path resolution within paper context
+  - Cycle detection and duplicate inclusion prevention
+  - Clean error messages for missing files and path traversal attempts
+- **PDF Support**:
+  - PDF manuscript recognition and text extraction
+  - Per-page provenance tracking
+  - Handling of malformed, encrypted, and text-unavailable PDFs
+- **GUI**:
+  - `paper-guard --gui` launches local web interface
+  - Dashboard showing version/provider/config/recent runs
+  - Review interface for starting reviews and watching progress
+  - Results view with findings, filters, and style switching
+  - JSON export of canonical RunRecord
+  - Security boundaries preventing bypass of validation
+
+### Security & Integrity
+- Input manuscript (LaTeX/PDF) remains byte-identical before and after review
+- Presentation styles never alter:
+  - Finding IDs, severity, confidence, evidence, claims, categories
+  - Judge results or revision scope
+- External prompts can modify reviewer instructions but cannot:
+  - Remove integrity preamble
+  - Alter wrapper or arrangement
+  - Bypass domain validation
+- Bibliographic metadata from external sources treated as untrusted
+- No revision without explicit human approval (`--approve-all` not used in release testing)
+- Secret scrubbing in logs prevents credential leakage
+- Path traversal blocks prevent access outside paper context
+- Response limits and timeouts on all network requests
+
+### Changed
+- Updated all workspace crate versions from 1.0.0 to 1.1.0
+- Updated Cargo.lock dependencies to latest compatible versions
+- Improved cross-platform path normalization in LaTeX parser
+- Enhanced Windows support in CI/CD pipeline
+- Updated documentation to reflect actual implemented features
+- Refactored internal module organization for better maintainability
 
 ### Added
 

@@ -6,6 +6,7 @@ members = [
     "crates/paper-guard-parser",
     "crates/paper-guard-renderer",
     "crates/paper-guard-review",
+    "crates/paper-guard-bibliography",
     "crates/paper-guard-agents",
     "crates/paper-guard-ledger",
     "crates/paper-guard-validation",
@@ -19,7 +20,7 @@ members = [
 ]
 
 [workspace.package]
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["Paper Guard Contributors"]
@@ -58,6 +59,7 @@ paper-guard-llm = { path = "crates/paper-guard-llm" }
 paper-guard-parser = { path = "crates/paper-guard-parser" }
 paper-guard-renderer = { path = "crates/paper-guard-renderer" }
 paper-guard-review = { path = "crates/paper-guard-review" }
+paper-guard-bibliography = { path = "crates/paper-guard-bibliography" }
 paper-guard-agents = { path = "crates/paper-guard-agents" }
 paper-guard-ledger = { path = "crates/paper-guard-ledger" }
 paper-guard-validation = { path = "crates/paper-guard-validation" }

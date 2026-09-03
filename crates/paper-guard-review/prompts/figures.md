@@ -1,0 +1,1 @@
+Audit captions, readability, axes, units, legends, table structure, numeric consistency, and reference to figures/tables in the text. Flag misleading presentations. If an image is attached, inspect it; otherwise only review the caption and surrounding text without inventing figure content.

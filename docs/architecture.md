@@ -486,6 +486,126 @@ style = "neutral"     # neutral | funny | insulting
 used to alter the review. The canonical dataset, Judge decisions, and revision
 scopes are invariant across styles.
 
+### 2.17 External prompt loading (in `paper-guard-review::prompts`)
+
+The only LLM prompts in the pipeline are the five reviewer system prompts.
+Their *role-instructions* paragraph is externalizable so prompts can be
+developed, tested, and changed **without recompiling Paper Guard**.
+
+Resolution per role:
+
+1. external file `<prompt-directory>/<role>.md` (explicitly present → used);
+2. embedded default compiled into the binary (`include_str!` of the
+   `prompts/*.md` files inside `paper-guard-review`).
+
+The default prompt directory is `~/.paper-guard/config/prompts` (inside the
+canonical per-user directory), resolved portably via the platform home
+directory (`paper-guard-app::paths`); `[prompts]
+directory` in `paper-guard.toml` overrides it and a leading `~` is expanded —
+never treated as a literal file name. Missing files fall back to the embedded
+default; files that exist but cannot be read (permission denied, I/O error,
+not a file, symlink escape outside the directory) fail the run loudly and are
+never silently replaced. The loader executes nothing, loads nothing outside
+the configured directory (canonical-path check), makes no network requests,
+and never logs prompt content. There are no template placeholders in the
+prompts: the document is appended by code in the user message, and the fixed
+wrapper plus the non-negotiable integrity preamble are always composed by code
+around the role instructions — an external file cannot remove the integrity
+guardrails.
+
+The Judge and the revision engine are deterministic code and have no LLM
+prompts, so they have no prompt entries (`judge.md`/`revision.md` are never
+loaded). Every enabled agent's ledger outcome records prompt provenance
+(`prompt_usage`: `source` `embedded-default`/`external`, SHA-256 of the full
+composed system prompt sent to the model, and the external file path when
+used) so a run can later be audited for which prompt actually influenced it.
+Prompt contents are never persisted. The canonical RunRecord semantics,
+schema/domain validation, Judge, evidence system, and ledger logic are
+unchanged; the loader only supplies text to existing reviewers.
+
+### 2.18 Canonical user directory, user config & rolling logs
+
+Paper Guard owns one canonical per-user directory (`~/.paper-guard`, resolved
+through the platform home directory via `paper-guard-app::paths` — never a
+hard-coded OS path): `config/config.toml` (user configuration), `config/prompts/`
+(editable reviewer prompts), `logs/` (rolling technical logs) and `data/`
+(per-user review data, opt-in). `paper-guard setup` creates the layout,
+writes a default `config.toml` and exports the embedded default prompts;
+it is idempotent and never overwrites user files. Configuration resolution is
+`CLI arguments > explicit --config > ~/.paper-guard/config/config.toml (when
+present) > built-in defaults`; a missing user configuration is never an error.
+`config show` prints the effective configuration with credential-looking
+values redacted; `config edit` opens the user file in `$VISUAL`/`$EDITOR` or a
+platform default editor.
+
+Technical logs are mirrored (console output is unchanged) into
+`logs/paper-guard.log` via the logging library's native size-based rotation
+(10 MiB per file, 5 rotated files, oldest deleted automatically, thread-safe).
+Log records carry provider/model/reviewer/stage/run id/status/finding
+counts/error categories only; manuscript contents are never logged and a
+defense-in-depth scrubber masks credential-looking tokens before anything is
+written to the log file.
+
+### 2.19 Bibliography Verification Layer (M10, in `paper-guard-bibliography`)
+
+Bibliography verification is an **optional, additive, opt-in** stage. It runs
+*after* parsing and *before* the LLM reviewers, but it never feeds the
+reviewers: results are appended to the canonical `RunRecord.bibliography` and
+rendered by the human-readable report as a data-only section. It cannot modify
+or delete reviewer findings, Judge decisions, confidence, severity, evidence,
+or the manuscript (verified by E2E SHA-256 checks).
+
+Architecture:
+
+```text
+Paper
+  │
+  └── Bibliography ──► BibliographyVerifier (paper-guard-bibliography)
+                          ├── ArxivProvider        (real, opt-in network)
+                          ├── GoogleScholarProvider (Unavailable slot)
+                          └── MockProvider          (offline test double)
+                          ▼
+                      canonical BibliographyResult (paper-guard-core::bibliography)
+                          ▼
+                      RunRecord.bibliography / JSON / human report
+```
+
+* **Canonical result types live in `paper-guard-core::bibliography`**
+  (`VerificationStatus`, `BibliographyMismatch`, `BibliographyResult`) — data
+  only, no provider logic in core. `RunRecord` gains an additive,
+  `#[serde(default)]` `bibliography` field, so every legacy run record loads
+  unchanged.
+* **Provider abstraction** is the spec-shaped trait in
+  `paper-guard-bibliography::provider` (`BibliographyProvider`); providers
+  receive an immutable `ReferenceProbe` (metadata only) and return a canonical
+  result. arXiv data is untrusted input; the final status is always decided by
+  the deterministic matcher (`arxiv::decide`), never copied from upstream.
+* **Deterministic matching.** Statuses (`verified`, `likely_match`,
+  `partial_match`, `conflicting_metadata`, `not_found`, `unavailable`,
+  `not_checked`) follow the documented rule table; explicit `mismatches[]`
+  list paper-vs-source field differences. Original citations are never
+  corrected.
+* **arXiv.** Real provider against the fixed `export.arxiv.org` API endpoint
+  (direct id lookup when the citation carries an id; otherwise a bounded
+  title search). The endpoint is not configurable — no SSRF surface. Requests
+  are time-bounded and responses size-bounded.
+* **Google Scholar is not automated** (no stable official API; scraping would
+  violate terms of service and rate-limit rules). The provider slot returns an
+  honest `Unavailable` result with an explanatory note whenever enabled and
+  never fabricates matches. Crossref/OpenAlex/DataCite are documented future
+  providers behind the same trait.
+* **Privacy.** Verification is disabled by default (`[bibliography]
+  enabled = false`). Only bibliographic metadata is sent; full manuscript text
+  never leaves the machine for this feature. No secrets are logged.
+* **Bounded local cache.** `<data_dir>/bibliography-cache/` stores plain JSON
+  keyed by SHA-256(source + query). It is bounded (entry + byte budgets,
+  oldest evicted first), transparent (`from_cache: true`), deletable
+  (`paper-guard bibliography --clear-cache`), and never caches transient
+  `unavailable` results. The cache has no scientific semantics.
+* **Offline tests.** All tests use deterministic fakes/fixtures — no unit or
+  integration test contacts arXiv or Google Scholar. `provider = "mock"` is an
+  offline, clearly-labelled engine used by CI/demos.
+
 ## 3. Pipeline
 
 ```

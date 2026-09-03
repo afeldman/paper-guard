@@ -3,6 +3,7 @@
 //! security boundaries (no external bind, no unauthored mutations).
 
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
 
 use paper_guard_app::config::AppConfig;
@@ -210,4 +211,106 @@ async fn gui_security_no_external_bind_by_default() {
     let banner = startup.banner();
     assert!(banner.contains("Paper Guard 1.0.0"));
     assert!(banner.contains("http://127.0.0.1:8080"));
+}
+
+/// The embedded logo is served locally as a PNG over the GUI router.
+#[tokio::test]
+async fn gui_logo_served_as_embedded_png() {
+    let (router, _t) = gui_router_with_temp_dir();
+    let res = router
+        .oneshot(
+            Request::builder()
+                .uri("/logo.png")
+                .method(Method::GET)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let ct = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(ct.contains("image/png"));
+    let body = axum::body::to_bytes(res.into_body(), 2 * 1024 * 1024)
+        .await
+        .unwrap();
+    assert!(!body.is_empty());
+    // PNG signature + byte-identical to the compiled-in constant.
+    assert_eq!(&body[..8], b"\x89PNG\r\n\x1a\n");
+    assert_eq!(body.len(), paper_guard_gui::static_files::LOGO_PNG.len());
+    assert_eq!(body.as_ref(), paper_guard_gui::static_files::LOGO_PNG);
+}
+
+/// The bytes embedded into the GUI binary equal the canonical workspace asset
+/// `docs/logo.png` exactly (single source of truth, no drift).
+#[test]
+fn embedded_logo_matches_canonical_docs_asset() {
+    let canonical = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("docs")
+        .join("logo.png");
+    let canonical_bytes =
+        std::fs::read(&canonical).expect("failed to read canonical docs/logo.png");
+    assert!(!canonical_bytes.is_empty());
+    assert_eq!(
+        paper_guard_gui::static_files::LOGO_PNG,
+        canonical_bytes.as_slice()
+    );
+}
+
+/// The top-level README must reference the canonical logo by its
+/// repository-relative path so GitHub renders it.
+#[test]
+fn repository_readme_references_canonical_logo() {
+    let readme = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("README.md");
+    let text = std::fs::read_to_string(&readme).expect("failed to read workspace README.md");
+    assert!(
+        text.contains("src=\"docs/logo.png\""),
+        "README.md must reference the logo with the repository-relative path docs/logo.png"
+    );
+}
+
+/// The GUI page is fully self-contained: it references only same-origin or
+/// inline assets (the embedded logo), never external network resources.
+#[test]
+fn gui_index_embeds_logo_without_external_assets() {
+    let html = paper_guard_gui::static_files::INDEX_HTML;
+    // Header wordmark + favicon both point at the embedded same-origin logo.
+    assert!(
+        html.contains("src=\"/logo.png\""),
+        "header <img> must use /logo.png"
+    );
+    assert!(
+        html.contains("rel=\"icon\""),
+        "favicon link must be present"
+    );
+    assert!(
+        html.contains("href=\"/logo.png\""),
+        "favicon must use /logo.png"
+    );
+    // No external resource references of any kind (http/https/protocol-relative).
+    for needle in [
+        "src=\"http",
+        "href=\"http",
+        "src='http",
+        "href='http",
+        "src=\"//",
+        "href=\"//",
+        "url(http",
+        "url('http",
+        "url(\"http",
+    ] {
+        assert!(
+            !html.contains(needle),
+            "GUI index must not reference external assets (found `{needle}`)"
+        );
+    }
 }

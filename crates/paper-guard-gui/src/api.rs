@@ -6,7 +6,9 @@
 //! and render it (as text/JSON) for the browser.
 //!
 //! Security:
-//! * `GET /` serves the embedded static GUI (no external assets).
+//! * `GET /` serves the embedded static GUI; `GET /logo.png` serves the
+//!   embedded logo. Both are compile-time assets — the GUI chrome never makes
+//!   an external network request.
 //! * Style switching is a *query parameter* on a render endpoint — it is never
 //!   persisted into the canonical RunRecord, never triggers an LLM request,
 //!   and can never alter findings/severity/evidence/judge/revision data.
@@ -21,7 +23,7 @@ use axum::{Json, Router};
 use paper_guard_ledger::LedgerStore;
 use paper_guard_report::{build_human_report, ReportHeader, ReviewStyle};
 
-use crate::static_files::INDEX_HTML;
+use crate::static_files::{static_asset, INDEX_HTML, LOGO_PATH};
 
 /// Values returned to the dashboard.
 #[derive(Debug, serde::Serialize)]
@@ -85,6 +87,7 @@ pub struct ReportQuery {
 pub fn gui_router(state: paper_guard_service::AppState) -> Router {
     Router::new()
         .route("/", get(index))
+        .route(LOGO_PATH, get(logo))
         .route("/gui/dashboard", get(gui_dashboard))
         .route("/gui/reviews/:run_id/report", get(gui_report))
         .route("/gui/reviews/:run_id/json", get(gui_json))
@@ -106,6 +109,26 @@ async fn index() -> impl IntoResponse {
         )],
         Html(INDEX_HTML),
     )
+}
+
+/// `GET /logo.png` — serve the embedded Paper Guard logo (PNG bytes).
+///
+/// The bytes are compiled into the binary from the canonical `docs/logo.png`
+/// (see the crate's `build.rs`), so this never touches the filesystem and
+/// never depends on the process working directory.
+async fn logo() -> impl IntoResponse {
+    match static_asset(LOGO_PATH) {
+        Some((mime, bytes, cache)) => (
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, HeaderValue::from_static(mime)),
+                (header::CACHE_CONTROL, HeaderValue::from_static(cache)),
+            ],
+            bytes,
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 /// `GET /gui/dashboard` — version, provider, config summary, recent runs.

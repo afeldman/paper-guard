@@ -6,12 +6,15 @@
 //! It is deliberately free of any dependency on a specific parser, LLM provider,
 //! renderer, or CLI. It is the single source of truth for the domain model.
 
+pub mod bibliography;
 pub mod canonical;
 pub mod finding;
 pub mod integrity;
 pub mod provenance;
 pub mod revision;
 pub mod severity;
+
+pub use bibliography::{BibliographyMismatch, BibliographyResult, VerificationStatus};
 
 pub use canonical::{
     CanonicalDocumentBuilder, Citation, Claim, ClaimId, ClaimType, Document, DocumentMeta,

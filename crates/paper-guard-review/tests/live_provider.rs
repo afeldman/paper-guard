@@ -177,6 +177,7 @@ async fn live_single_reviewer_end_to_end() {
                 output_tokens: u.completion_tokens,
             }
         }),
+        prompt_usage: None,
     });
     run.status = paper_guard_ledger::RunStatus::Completed;
     ledger.save_run(&run).expect("save live run");

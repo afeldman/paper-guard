@@ -9,7 +9,8 @@ use std::sync::Arc;
 use paper_guard_agents::{RevisionEngine, RevisionEngineOptions, RevisionOutcome};
 use paper_guard_core::{ContentHash, Document, RevisionInstruction, SCHEMA_VERSION};
 use paper_guard_ledger::{
-    AgentOutcome, FindingRecord, JudgedRecord, LedgerStore, RunRecord, RunStatus, ValidationRecord,
+    AgentOutcome, FindingRecord, JudgedRecord, LedgerStore, PromptUsage, RunRecord, RunStatus,
+    ValidationRecord,
 };
 use paper_guard_parser::{parse_source_path, SourceFormat};
 use paper_guard_review::{
@@ -160,6 +161,23 @@ pub async fn run_pipeline(
         &now_iso(),
     );
 
+    // --- Optional Bibliography Verification (M10) ---
+    // Runs *before* the LLM reviewers. It is purely additive: results are
+    // stored on the canonical RunRecord and never feed back into reviewer
+    // prompts, Judge, or revision decisions.
+    run.bibliography =
+        crate::bibliography::run_bibliography_verification(config, data_dir, &document).await?;
+    if !run.bibliography.is_empty() {
+        logging::log_review_start(&run_id, "bibliography", "verify");
+        logging::log_review_end(
+            &run_id,
+            "bibliography",
+            "verify",
+            "done",
+            run.bibliography.len(),
+        );
+    }
+
     // --- Review stage (parallel) ---
     let provider = build_provider(config, fixture_response)?;
     // Retrieve authorized historical review memory as untrusted reviewer
@@ -172,12 +190,15 @@ pub async fn run_pipeline(
         memory_context,
     };
 
-    let reviewers = enabled_reviewers(config);
+    let assignments = reviewer_assignments(config)?;
+    let prompt_usages: Vec<PromptUsage> =
+        assignments.iter().map(|a| a.prompt_usage.clone()).collect();
+    let reviewers: Vec<Box<dyn Reviewer>> = assignments.into_iter().map(|a| a.reviewer).collect();
     logging::log_review_start(&run_id, "pipeline", "review");
     let runner = ReviewRunner::new(config.reviewers.max_concurrent);
     let agent_results = runner.run(&ctx, reviewers, provider).await;
 
-    for res in &agent_results {
+    for (idx, res) in agent_results.iter().enumerate() {
         let status = match res.status {
             AgentStatus::Success => "success",
             AgentStatus::Failed => "failed",
@@ -202,6 +223,9 @@ pub async fn run_pipeline(
             error: res.error.clone(),
             finding_count: count,
             provider_usage,
+            // Prompt provenance is recorded per enabled agent (order matches
+            // the reviewer list the runner executed).
+            prompt_usage: prompt_usages.get(idx).cloned(),
         });
         if res.status == AgentStatus::Failed {
             logging::log_agent_failure(
@@ -363,41 +387,81 @@ fn apply_changes(source: &str, outcome: &RevisionOutcome) -> String {
 }
 
 /// Build the enabled reviewer set from configuration.
-pub fn enabled_reviewers(config: &AppConfig) -> Vec<Box<dyn Reviewer>> {
-    let mut out: Vec<Box<dyn Reviewer>> = Vec::new();
-    let mk = |_kind: ReviewerKind, cfg: &crate::config::ReviewerSectionConfig| ReviewerSettings {
+pub fn enabled_reviewers(config: &AppConfig) -> anyhow::Result<Vec<Box<dyn Reviewer>>> {
+    Ok(reviewer_assignments(config)?
+        .into_iter()
+        .map(|a| a.reviewer)
+        .collect())
+}
+
+/// A reviewer plus the prompt provenance recorded for it in the ledger.
+pub struct ReviewerAssignment {
+    /// The reviewer (wrapped so its system prompt uses the resolved prompt).
+    pub reviewer: Box<dyn Reviewer>,
+    /// Prompt provenance (source + content hash) for the ledger.
+    pub prompt_usage: PromptUsage,
+}
+
+/// Build the enabled reviewers from configuration, resolving each role's
+/// prompt (external file override, else embedded default) and recording its
+/// provenance. A broken external prompt fails the whole run (no silent
+/// fallback); a missing one falls back to the embedded default.
+pub fn reviewer_assignments(config: &AppConfig) -> anyhow::Result<Vec<ReviewerAssignment>> {
+    let base_dir = config.prompts_dir()?;
+    let mut out = Vec::new();
+    for kind in paper_guard_review::PROMPT_ROLES {
+        let Some(inner) = raw_reviewer_for(*kind, config) else {
+            continue;
+        };
+        let resolved = paper_guard_review::resolve_prompt(&base_dir, *kind)?;
+        let wrapped = paper_guard_review::PromptedReviewer::new(inner, &resolved);
+        out.push(ReviewerAssignment {
+            reviewer: Box::new(wrapped),
+            prompt_usage: PromptUsage {
+                prompt: kind.name().to_string(),
+                source: resolved.source.label().to_string(),
+                sha256: resolved.sha256_hex(),
+                path: resolved.path.map(|p| p.to_string_lossy().into_owned()),
+            },
+        });
+    }
+    Ok(out)
+}
+
+/// Build a raw reviewer instance for one kind when it is enabled.
+fn raw_reviewer_for(kind: ReviewerKind, config: &AppConfig) -> Option<Box<dyn Reviewer>> {
+    use paper_guard_review::{
+        AdversarialReviewer, EvidenceReviewer, FigureReviewer, ReferenceReviewer,
+        ScientificReviewer,
+    };
+    let mk = |cfg: &crate::config::ReviewerSectionConfig| ReviewerSettings {
         enabled: cfg.enabled,
         provider: cfg.provider.clone(),
         model: cfg.model.clone(),
         seed: cfg.seed,
         temperature: 0.0,
     };
-    if config.reviewers.scientific.enabled {
-        out.push(Box::new(paper_guard_review::ScientificReviewer {
-            settings: mk(ReviewerKind::Scientific, &config.reviewers.scientific),
-        }));
+    let section = match kind {
+        ReviewerKind::Scientific => &config.reviewers.scientific,
+        ReviewerKind::Adversarial => &config.reviewers.adversarial,
+        ReviewerKind::Evidence => &config.reviewers.evidence,
+        ReviewerKind::References => &config.reviewers.references,
+        ReviewerKind::Figures => &config.reviewers.figures,
+        // The judge is deterministic code with no LLM prompt.
+        ReviewerKind::Judge => return None,
+    };
+    if !section.enabled {
+        return None;
     }
-    if config.reviewers.adversarial.enabled {
-        out.push(Box::new(paper_guard_review::AdversarialReviewer {
-            settings: mk(ReviewerKind::Adversarial, &config.reviewers.adversarial),
-        }));
+    let settings = mk(section);
+    match kind {
+        ReviewerKind::Scientific => Some(Box::new(ScientificReviewer { settings })),
+        ReviewerKind::Adversarial => Some(Box::new(AdversarialReviewer { settings })),
+        ReviewerKind::Evidence => Some(Box::new(EvidenceReviewer { settings })),
+        ReviewerKind::References => Some(Box::new(ReferenceReviewer { settings })),
+        ReviewerKind::Figures => Some(Box::new(FigureReviewer { settings })),
+        ReviewerKind::Judge => None,
     }
-    if config.reviewers.evidence.enabled {
-        out.push(Box::new(paper_guard_review::EvidenceReviewer {
-            settings: mk(ReviewerKind::Evidence, &config.reviewers.evidence),
-        }));
-    }
-    if config.reviewers.references.enabled {
-        out.push(Box::new(paper_guard_review::ReferenceReviewer {
-            settings: mk(ReviewerKind::References, &config.reviewers.references),
-        }));
-    }
-    if config.reviewers.figures.enabled {
-        out.push(Box::new(paper_guard_review::FigureReviewer {
-            settings: mk(ReviewerKind::Figures, &config.reviewers.figures),
-        }));
-    }
-    out
 }
 
 /// Determine the next run id.

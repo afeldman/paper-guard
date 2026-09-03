@@ -56,6 +56,11 @@ enum Command {
         /// `summary`. `JSON` artifacts are always written regardless.
         #[arg(long)]
         output: Option<String>,
+        /// Also run Bibliography Verification (M10) in this review. Equivalent
+        /// to `[bibliography] enabled = true` in the configuration; the
+        /// provider still comes from the configuration.
+        #[arg(long)]
+        bibliography: bool,
     },
     /// Run the full end-to-end workflow (review + judge + revision + render + validate).
     Run {
@@ -80,6 +85,11 @@ enum Command {
         /// `summary`. `JSON` artifacts are always written regardless.
         #[arg(long)]
         output: Option<String>,
+        /// Also run Bibliography Verification (M10) in this run. Equivalent
+        /// to `[bibliography] enabled = true` in the configuration; the
+        /// provider still comes from the configuration.
+        #[arg(long)]
+        bibliography: bool,
     },
     /// Record a human decision (accept/reject/modified) on a review finding.
     /// The decision is stored as a private Review Memory candidate.
@@ -195,13 +205,106 @@ enum Command {
     },
     /// Print version and platform identity. A stub of `--version` that also
     /// reports the build profile and commit without any review output.
-    Info,
+    Info {
+        /// Path to a `paper-guard.toml` (optional). When given, the prompts
+        /// block reflects the prompt directory configured in that file.
+        #[arg(long)]
+        config: Option<String>,
+    },
 
     /// Interact with Review Memory (retrieval-approved units only).
     Memory {
         /// Sub-command.
         #[command(subcommand)]
         command: MemoryCommand,
+    },
+
+    /// Manage external reviewer prompts (copy defaults, list prompt sources).
+    ///
+    /// Reviewer prompts are plain files in the prompt directory
+    /// (`~/.paper-guard/config/prompts` by default). They can be edited freely —
+    /// prompt changes take effect without recompiling Paper Guard.
+    Prompts {
+        #[command(subcommand)]
+        command: PromptsCommand,
+    },
+
+    /// Create the canonical per-user directory layout
+    /// (`~/.paper-guard/{config,prompts,logs,data}`), write a default
+    /// `config.toml`, and export the embedded default reviewer prompts.
+    ///
+    /// Idempotent: existing user files are never overwritten. Setup is
+    /// optional — the binary works out of the box without it.
+    Setup,
+
+    /// Verify a paper's bibliography against scholarly sources (M10).
+    ///
+    /// Opt-in network feature: disabled unless `[bibliography] enabled = true`
+    /// in the configuration. Sends only bibliographic metadata of each
+    /// reference (title, authors, year, arXiv id, DOI) — never manuscript
+    /// text. arXiv is the supported source; Google Scholar is deliberately not
+    /// automated and reports `Unavailable`. With `--clear-cache`, deletes the
+    /// local response cache instead of running a verification.
+    Bibliography {
+        /// The paper source to check (e.g. `paper.pdf`, `main.tex`). Optional
+        /// only when `--clear-cache` is used.
+        source: Option<String>,
+        /// Path to a `paper-guard.toml` (optional).
+        #[arg(long)]
+        config: Option<String>,
+        /// Output format: `human` (default) or `json`.
+        #[arg(long)]
+        output: Option<String>,
+        /// Delete the local bibliography response cache and exit.
+        #[arg(long)]
+        clear_cache: bool,
+    },
+
+    /// Inspect or edit the effective Paper Guard configuration.
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigCommand {
+    /// Show the effective configuration (user config or built-in defaults).
+    ///
+    /// Secrets are never printed: API keys, tokens and credentials are
+    /// redacted even if they accidentally appear in a config value.
+    Show {
+        /// Path to a specific `paper-guard.toml` to display instead of the
+        /// resolved effective configuration.
+        #[arg(long)]
+        config: Option<String>,
+    },
+    /// Edit the user configuration (`~/.paper-guard/config/config.toml`) in
+    /// the platform editor ($VISUAL/$EDITOR, or a platform default).
+    Edit {
+        /// Edit this file instead of the canonical user configuration.
+        #[arg(long)]
+        config: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum PromptsCommand {
+    /// Copy the embedded default prompts into the prompt directory.
+    ///
+    /// Existing files are never overwritten, so locally edited prompts are
+    /// preserved.
+    Init {
+        /// Path to a `paper-guard.toml` (optional; default prompt directory
+        /// is used when omitted).
+        #[arg(long)]
+        config: Option<String>,
+    },
+    /// Show which prompt source each role resolves to (no prompt contents).
+    List {
+        /// Path to a `paper-guard.toml` (optional).
+        #[arg(long)]
+        config: Option<String>,
     },
 }
 
@@ -299,8 +402,12 @@ async fn main() -> anyhow::Result<()> {
             approve_all,
             style,
             output,
+            bibliography,
         } => {
-            let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+            let mut cfg = load_cfg(&config)?;
+            if bibliography {
+                cfg.bibliography.enabled = true;
+            }
             let style = resolve_review_style(style.as_deref(), &cfg)?;
             let output_mode = resolve_output_mode(output.as_deref())?;
             if let Some(server_url) = resolve_server_url(&cfg, server.as_deref()) {
@@ -323,8 +430,12 @@ async fn main() -> anyhow::Result<()> {
             approve_all,
             style,
             output,
+            bibliography,
         } => {
-            let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+            let mut cfg = load_cfg(&config)?;
+            if bibliography {
+                cfg.bibliography.enabled = true;
+            }
             let style = resolve_review_style(style.as_deref(), &cfg)?;
             let output_mode = resolve_output_mode(output.as_deref())?;
             if let Some(server_url) = resolve_server_url(&cfg, server.as_deref()) {
@@ -341,17 +452,17 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Command::Findings { config } => {
-            let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+            let cfg = load_cfg(&config)?;
             list_findings(&cfg.reproducibility.data_dir)?;
         }
         Command::Judge { run, config } => {
-            let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+            let cfg = load_cfg(&config)?;
             let ledger = paper_guard_ledger::LedgerStore::open(&cfg.reproducibility.data_dir)?;
             let record = ledger.load_run(&run)?;
             println!("run {run}: {} judged findings", record.judge_results.len());
         }
         Command::Revise { run, config } => {
-            let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+            let cfg = load_cfg(&config)?;
             let ledger = paper_guard_ledger::LedgerStore::open(&cfg.reproducibility.data_dir)?;
             let record = ledger.load_run(&run)?;
             println!(
@@ -360,7 +471,7 @@ async fn main() -> anyhow::Result<()> {
             );
         }
         Command::Validate { run, config } => {
-            let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+            let cfg = load_cfg(&config)?;
             let ledger = paper_guard_ledger::LedgerStore::open(&cfg.reproducibility.data_dir)?;
             let record = ledger.load_run(&run)?;
             let validations = &record.validation_results;
@@ -380,7 +491,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Command::Ledger { config } => {
-            let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+            let cfg = load_cfg(&config)?;
             let ledger = paper_guard_ledger::LedgerStore::open(&cfg.reproducibility.data_dir)?;
             let runs = ledger.list_runs()?;
             if runs.is_empty() {
@@ -400,7 +511,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Command::Report { run, config } => {
-            let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+            let cfg = load_cfg(&config)?;
             let ledger = paper_guard_ledger::LedgerStore::open(&cfg.reproducibility.data_dir)?;
             let id = run.unwrap_or_else(|| {
                 ledger
@@ -441,7 +552,7 @@ async fn main() -> anyhow::Result<()> {
             config,
             server,
         } => {
-            let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+            let cfg = load_cfg(&config)?;
             if let Some(server_url) = resolve_server_url(&cfg, server.as_deref()) {
                 let client = build_remote_client(&cfg, &server_url)?;
                 send_remote_feedback(&client, &run, &finding_id, &decision, feedback.as_deref())
@@ -468,7 +579,7 @@ async fn main() -> anyhow::Result<()> {
             paper_guard_service::serve(&addr, state).await?;
         }
         Command::Health { config, server } => {
-            let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+            let cfg = load_cfg(&config)?;
             if let Some(server_url) = resolve_server_url(&cfg, server.as_deref()) {
                 let client = build_remote_client(&cfg, &server_url)?;
                 let h = client.health().await?;
@@ -493,10 +604,10 @@ async fn main() -> anyhow::Result<()> {
             print_diagnostics(paths);
         }
         Command::Inspect { source, config } => {
-            let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+            let cfg = load_cfg(&config)?;
             run_inspect(&cfg, &source).await?;
         }
-        Command::Info => {
+        Command::Info { config } => {
             println!(
                 "Paper Guard {} ({}, {}) commit={} profile={}",
                 paper_guard_app::build_info::version(),
@@ -510,10 +621,12 @@ async fn main() -> anyhow::Result<()> {
                 platform_or_none(paper_guard_app::paths::config_dir()),
                 platform_or_none(paper_guard_app::paths::data_dir())
             );
+            let cfg = load_cfg(&config)?;
+            print_prompt_status(&cfg);
         }
         Command::Memory { command } => match command {
             MemoryCommand::List { config } => {
-                let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+                let cfg = load_cfg(&config)?;
                 let mem = paper_guard_app::MemoryService::from_config(&cfg)?;
                 let entries = mem.list(None)?;
                 if entries.is_empty() {
@@ -531,7 +644,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             MemoryCommand::Show { memory_id, config } => {
-                let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+                let cfg = load_cfg(&config)?;
                 let mem = paper_guard_app::MemoryService::from_config(&cfg)?;
                 let Some(e) = mem.load(&memory_id)? else {
                     anyhow::bail!("memory unit {memory_id} not found");
@@ -572,7 +685,7 @@ async fn main() -> anyhow::Result<()> {
                 config,
                 actor,
             } => {
-                let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+                let cfg = load_cfg(&config)?;
                 let mem = paper_guard_app::MemoryService::from_config(&cfg)?;
                 mem.approve_memory(&memory_id, &actor).await?;
                 println!("approved {memory_id} for retrieval-context use (actor={actor})");
@@ -582,7 +695,7 @@ async fn main() -> anyhow::Result<()> {
                 config,
                 actor,
             } => {
-                let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+                let cfg = load_cfg(&config)?;
                 let mem = paper_guard_app::MemoryService::from_config(&cfg)?;
                 mem.approve_training(&memory_id, &actor).await?;
                 println!("approved {memory_id} for training-dataset export (actor={actor})");
@@ -592,13 +705,13 @@ async fn main() -> anyhow::Result<()> {
                 config,
                 actor,
             } => {
-                let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+                let cfg = load_cfg(&config)?;
                 let mem = paper_guard_app::MemoryService::from_config(&cfg)?;
                 mem.reject_memory(&memory_id, &actor).await?;
                 println!("rejected {memory_id} (actor={actor})");
             }
             MemoryCommand::Search { query, config } => {
-                let cfg = AppConfig::load(config.as_deref().map(PathBuf::from).as_deref())?;
+                let cfg = load_cfg(&config)?;
                 let mem = paper_guard_app::MemoryService::from_config(&cfg)?;
                 let hits = mem.search(&query, None, None).await?;
                 if hits.is_empty() {
@@ -616,9 +729,177 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         },
+        Command::Prompts { command } => match command {
+            PromptsCommand::Init { config } => {
+                let cfg = load_cfg(&config)?;
+                let dir = cfg.prompts_dir()?;
+                let (written, kept) = paper_guard_review::init_prompt_directory(&dir)?;
+                println!("Initialized Paper Guard prompts in {}", dir.display());
+                for role in paper_guard_review::PROMPT_ROLES {
+                    println!("  {}", paper_guard_review::prompt_file_name(*role));
+                }
+                if written.is_empty() {
+                    println!("Existing files were left unchanged.");
+                } else {
+                    println!(
+                        "Wrote {} new file(s); existing files were left unchanged.",
+                        written.len()
+                    );
+                }
+                debug_assert_eq!(
+                    kept.len() + written.len(),
+                    paper_guard_review::PROMPT_ROLES.len()
+                );
+            }
+            PromptsCommand::List { config } => {
+                let cfg = load_cfg(&config)?;
+                let dir = cfg.prompts_dir()?;
+                let mut broken = false;
+                println!("Prompts:");
+                println!("  directory: {}", dir.display());
+                for role in paper_guard_review::PROMPT_ROLES {
+                    match paper_guard_review::resolve_prompt(&dir, *role) {
+                        Ok(r) => {
+                            let file = r
+                                .path
+                                .as_deref()
+                                .map(|p| p.display().to_string())
+                                .unwrap_or_default();
+                            if file.is_empty() {
+                                println!("  {}: {}", role.name(), r.source.label());
+                            } else {
+                                println!("  {}: {} ({})", role.name(), r.source.label(), file);
+                            }
+                        }
+                        Err(e) => {
+                            println!("  {}: external (unreadable: {e})", role.name());
+                            broken = true;
+                        }
+                    }
+                }
+                if broken {
+                    std::process::exit(1);
+                }
+            }
+        },
+        Command::Bibliography {
+            source,
+            config,
+            output,
+            clear_cache,
+        } => {
+            let cfg = load_cfg(&config)?;
+            if clear_cache {
+                let dir =
+                    paper_guard_app::bibliography::bibliography_cache_dir(cfg.effective_data_dir());
+                paper_guard_app::bibliography::clear_bibliography_cache(cfg.effective_data_dir())?;
+                println!("cleared bibliography cache at {}", dir.display());
+                return Ok(());
+            }
+            let Some(source) = source else {
+                anyhow::bail!(
+                    "`paper-guard bibliography` needs a paper source path (or use `--clear-cache`)"
+                );
+            };
+            if !cfg.bibliography.effective_enabled() {
+                println!("Bibliography verification is disabled.");
+                println!("Enable it in your configuration (or `paper-guard.toml`):");
+                println!("  [bibliography]");
+                println!("  enabled = true");
+                println!("The default provider is `arxiv`; `mock` is an offline test engine.");
+                println!(
+                    "Only bibliographic metadata is sent to scholarly sources — never manuscript text."
+                );
+                return Ok(());
+            }
+            let mode = match output.as_deref() {
+                None | Some("human") => BibOutput::Human,
+                Some("summary") => BibOutput::Summary,
+                Some("json") => BibOutput::Json,
+                Some(other) => anyhow::bail!(
+                    "unsupported --output `{other}` for bibliography; expected human, summary, or json"
+                ),
+            };
+            let (results, parsed) =
+                paper_guard_app::bibliography::verify_source(&source, &cfg).await?;
+            match mode {
+                BibOutput::Human | BibOutput::Summary => {
+                    println!(
+                        "{}",
+                        format_bibliography_report(
+                            &source,
+                            parsed,
+                            &results,
+                            mode == BibOutput::Summary
+                        )
+                    );
+                }
+                BibOutput::Json => {
+                    println!("{}", serde_json::to_string_pretty(&results)?);
+                }
+            }
+        }
+        Command::Setup => {
+            let report = paper_guard_app::run_setup()?;
+            println!("Paper Guard Setup");
+            for dir in report
+                .created_dirs
+                .iter()
+                .chain(report.existing_dirs.iter())
+            {
+                println!("ok {}", dir.display());
+            }
+            if report.config_created {
+                println!(
+                    "ok {} (created with built-in defaults)",
+                    report.config_path.display()
+                );
+            } else {
+                println!(
+                    "ok {} (already exists, left unchanged)",
+                    report.config_path.display()
+                );
+            }
+            let exported = report.prompts_written.len();
+            if exported > 0 {
+                println!(
+                    "ok {exported} reviewer prompt file(s) exported to {}",
+                    report.prompt_dir.display()
+                );
+            } else {
+                println!(
+                    "ok reviewer prompts already present in {} (left unchanged)",
+                    report.prompt_dir.display()
+                );
+            }
+            println!("Paper Guard is ready.");
+        }
+        Command::Config { command } => match command {
+            ConfigCommand::Show { config } => {
+                let cfg = load_cfg(&config)?;
+                let toml = toml::to_string_pretty(&cfg)
+                    .map_err(|e| anyhow::anyhow!("cannot serialize configuration: {e}"))?;
+                println!("# Effective Paper Guard configuration");
+                println!("# (values that look like secrets are redacted)");
+                println!("{}", redact_secrets(&toml));
+            }
+            ConfigCommand::Edit { config } => {
+                let path = match &config {
+                    Some(p) => std::path::PathBuf::from(p),
+                    None => paper_guard_app::paths::user_config_path().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "cannot resolve the platform home directory; no user configuration \
+                             path available"
+                        )
+                    })?,
+                };
+                edit_config_file(&path)?;
+            }
+        },
     }
     Ok(())
 }
+
 // ---------------------------------------------------------------------------
 // Discovery
 // ---------------------------------------------------------------------------
@@ -632,7 +913,7 @@ async fn run_discover(config_path: Option<&str>, force: bool) -> anyhow::Result<
     use paper_guard_discovery::verify::verify_and_classify;
     use paper_guard_discovery::ServiceDiscovery;
 
-    let cfg = AppConfig::load(config_path.map(PathBuf::from).as_deref())?;
+    let cfg = AppConfig::load_user_preferred(config_path.map(PathBuf::from).as_deref())?;
 
     let disc: DiscCfg = DiscCfg {
         enabled: cfg.discovery.enabled,
@@ -840,6 +1121,20 @@ async fn run_inspect(cfg: &AppConfig, source: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Load configuration honoring the documented resolution order:
+///
+/// ```text
+/// CLI arguments            (applied by the caller on top of the result)
+/// explicit --config        (highest file priority)
+/// ~/.paper-guard/config/config.toml   (user config, when present)
+/// built-in defaults
+/// ```
+///
+/// A missing user configuration is never an error.
+fn load_cfg(config: &Option<String>) -> anyhow::Result<AppConfig> {
+    AppConfig::load_user_preferred(config.as_deref().map(PathBuf::from).as_deref())
+}
+
 /// Render an optional platform path as a string for diagnostics; never leaks a
 /// missing directory, and never contains secret material.
 fn platform_or_none(p: Option<PathBuf>) -> String {
@@ -847,6 +1142,190 @@ fn platform_or_none(p: Option<PathBuf>) -> String {
         Some(p) => p.to_string_lossy().into_owned(),
         None => "(unresolved)".into(),
     }
+}
+
+/// Print which prompt source each reviewer role resolves to.
+///
+/// Only source + directory are shown — never prompt contents. An external
+/// file that exists but cannot be read is reported as unreadable rather than
+/// silently presented as the embedded default.
+fn print_prompt_status(cfg: &AppConfig) {
+    let dir = match cfg.prompts_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            println!("Prompts:");
+            println!("  directory: (unresolved: {e})");
+            return;
+        }
+    };
+    println!("Prompts:");
+    println!("  directory: {}", dir.display());
+    for role in paper_guard_review::PROMPT_ROLES {
+        match paper_guard_review::resolve_prompt(&dir, *role) {
+            Ok(r) => println!("  {}: {}", role.name(), r.source.label()),
+            Err(e) => println!("  {}: external (unreadable: {e})", role.name()),
+        }
+    }
+}
+
+/// Marker prefixes of common credential formats. Paper Guard never *intends*
+/// to store or print secrets (config holds environment-variable *names* only);
+/// this scrubber is defense-in-depth for `config show` and file logs.
+const SECRET_MARKERS: &[&str] = &[
+    "sk-",
+    "ghp_",
+    "github_pat_",
+    "AKIA",
+    "xoxb-",
+    "xoxp-",
+    "xoxa-",
+    "eyJ", // JWT header prefix
+    "-----BEGIN",
+    "Bearer ",
+];
+
+/// Replace anything that looks like a credential token with `[redacted]`.
+pub(crate) fn redact_secrets(text: &str) -> String {
+    let mut out = text.to_string();
+    for marker in SECRET_MARKERS {
+        while let Some(start) = out.find(marker) {
+            let bytes = out.as_bytes();
+            let mut end = start + marker.len();
+            while end < bytes.len()
+                && !matches!(
+                    bytes[end],
+                    b' ' | b'\t' | b'\n' | b'\r' | b'"' | b'\'' | b',' | b'}' | b'#' | b'.'
+                )
+            {
+                end += 1;
+            }
+            out.replace_range(start..end, "[redacted]");
+        }
+    }
+    out
+}
+
+/// Split an editor string (`$VISUAL`/`$EDITOR`, e.g. `code --wait`) into a
+/// program plus arguments. The file path is appended by the caller.
+pub(crate) fn split_editor_command(value: &str) -> Option<Vec<String>> {
+    let mut parts = value.split_whitespace();
+    let program = parts.next()?.to_string();
+    let mut out = vec![program];
+    out.extend(parts.map(|p| p.to_string()));
+    Some(out)
+}
+
+/// Whether `name` is an executable on `$PATH` (no shell involved).
+fn command_on_path(name: &str) -> bool {
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path) {
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if candidate
+                        .metadata()
+                        .map(|m| m.permissions().mode() & 0o111 != 0)
+                        .unwrap_or(false)
+                    {
+                        return true;
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = candidate;
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Resolve the platform editor. Order: `$VISUAL`, `$EDITOR`, platform
+/// defaults. Returns the command (program + args, file path appended by the
+/// caller) or `None` when no editor can be found.
+pub(crate) fn resolve_editor() -> Option<Vec<String>> {
+    for var in ["VISUAL", "EDITOR"] {
+        if let Ok(value) = std::env::var(var) {
+            if !value.trim().is_empty() {
+                return split_editor_command(&value);
+            }
+        }
+    }
+    resolve_platform_editor()
+}
+
+/// Platform-default editor command (program + args; the file path is appended
+/// by the caller).
+#[cfg(target_os = "windows")]
+fn resolve_platform_editor() -> Option<Vec<String>> {
+    Some(vec!["notepad.exe".to_string()])
+}
+
+/// macOS: prefer a blocking terminal editor when present; otherwise `open -t`
+/// opens the file in the default text editor without blocking.
+#[cfg(target_os = "macos")]
+fn resolve_platform_editor() -> Option<Vec<String>> {
+    for candidate in ["nano", "vim", "vi"] {
+        if command_on_path(candidate) {
+            return Some(vec![candidate.to_string()]);
+        }
+    }
+    Some(vec!["open".to_string(), "-t".to_string()])
+}
+
+/// Linux/BSD: sensible-editor first, then common terminal editors.
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+fn resolve_platform_editor() -> Option<Vec<String>> {
+    for candidate in ["sensible-editor", "nano", "vim", "vi"] {
+        if command_on_path(candidate) {
+            return Some(vec![candidate.to_string()]);
+        }
+    }
+    None
+}
+
+/// Open `path` in the resolved platform editor. When the file does not exist
+/// it is created with built-in defaults first (never overwriting an existing
+/// file). Returns a clear error when no editor is available.
+fn edit_config_file(path: &std::path::Path) -> anyhow::Result<()> {
+    let editor = resolve_editor().ok_or_else(|| {
+        anyhow::anyhow!("no editor available: set $VISUAL or $EDITOR (e.g. `export EDITOR=nano`)")
+    })?;
+
+    if !path.exists() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| anyhow::anyhow!("cannot create {}: {e}", parent.display()))?;
+        }
+        AppConfig::write_default_to(path).map_err(|e| {
+            anyhow::anyhow!(
+                "cannot create default configuration {}: {e}",
+                path.display()
+            )
+        })?;
+        println!("created {} with built-in defaults", path.display());
+    }
+
+    let mut command = editor.clone();
+    command.push(path.to_string_lossy().into_owned());
+
+    let status = std::process::Command::new(&command[0])
+        .args(&command[1..])
+        .status()
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "cannot start editor `{}`: {e} (set $VISUAL or $EDITOR)",
+                command[0]
+            )
+        })?;
+    if !status.success() {
+        anyhow::bail!("editor `{}` exited with {status}", command[0]);
+    }
+    println!("configuration saved at {}", path.display());
+    Ok(())
 }
 
 /// Print non-secret build/platform diagnostics. `paths` additionally shows the
@@ -875,6 +1354,10 @@ fn print_diagnostics(show_paths: bool) {
             platform_or_none(paths::default_config_path())
         );
         println!("default_data_dir={}", paths::default_data_dir());
+        println!(
+            "prompts_dir={}",
+            platform_or_none(paths::default_prompts_dir())
+        );
     }
 }
 
@@ -1121,6 +1604,105 @@ fn resolve_review_style(
     paper_guard_report::parse_style_or_err(&given).map_err(|e| anyhow::anyhow!(e.to_string()))
 }
 
+/// Output selector for the standalone bibliography command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BibOutput {
+    Human,
+    Summary,
+    Json,
+}
+
+/// Render the standalone bibliography verification report.
+///
+/// The output is a *presentation* of the canonical results. Markers and
+/// status labels are fixed and style-independent; no style (neutral/funny/
+/// insulting) ever alters these scientific data, and no output attacks
+/// authors personally.
+fn format_bibliography_report(
+    source: &str,
+    parsed: usize,
+    results: &[paper_guard_core::BibliographyResult],
+    summary: bool,
+) -> String {
+    let mut out = String::new();
+    out.push_str("Bibliography Verification\n");
+    out.push_str("=========================\n\n");
+    out.push_str(&format!("Paper: {source}\n"));
+    out.push_str(&format!("References parsed: {parsed}\n"));
+    if results.is_empty() {
+        out.push_str("\nNo references to verify.\n");
+        return out;
+    }
+
+    let sources: std::collections::BTreeSet<&str> =
+        results.iter().map(|r| r.source.as_str()).collect();
+    out.push_str(&format!(
+        "Sources: {}\n\n",
+        sources.into_iter().collect::<Vec<_>>().join(", ")
+    ));
+
+    if !summary {
+        let mut scholar_rows = Vec::new();
+        for result in results {
+            if result.source == "google_scholar" {
+                scholar_rows.push(&result.reference_id);
+                continue;
+            }
+            render_bibliography_result(&mut out, result);
+        }
+        if !scholar_rows.is_empty() {
+            out.push_str(&format!(
+                "Google Scholar:\n    {} ({} reference(s) — Scholar is not automated by \
+                 Paper Guard; see documentation)\n",
+                paper_guard_core::VerificationStatus::Unavailable.label(),
+                scholar_rows.len()
+            ));
+        }
+    } else {
+        // Summary: status counts only (still canonical data, no styling).
+        let mut counts: std::collections::BTreeMap<&'static str, usize> =
+            std::collections::BTreeMap::new();
+        for result in results {
+            *counts.entry(result.status.label()).or_insert(0) += 1;
+        }
+        for (label, count) in counts {
+            out.push_str(&format!("  {label}: {count}\n"));
+        }
+    }
+    out
+}
+
+fn render_bibliography_result(out: &mut String, result: &paper_guard_core::BibliographyResult) {
+    out.push_str(&format!(
+        "{} {}\n",
+        result.status.glyph(),
+        result.reference_id
+    ));
+    let citation = result.display_citation();
+    if citation != result.reference_id {
+        out.push_str(&format!("    {citation}\n"));
+    }
+    out.push_str(&format!("    Source: {}\n", result.source));
+    out.push_str(&format!(
+        "    {} (confidence {:.2})\n",
+        result.status.label(),
+        result.confidence
+    ));
+    if let Some(note) = &result.note {
+        out.push_str(&format!("    {note}\n"));
+    }
+    for m in &result.mismatches {
+        out.push_str(&format!(
+            "    Mismatch — {}: paper says {:?}, source says {:?}\n",
+            m.field, m.paper_value, m.source_value
+        ));
+    }
+    if result.from_cache {
+        out.push_str("    (served from local cache)\n");
+    }
+    out.push('\n');
+}
+
 /// Print the run output to the terminal. `human` renders the full
 /// human-readable review report; `summary` prints the concise one-liner. The
 /// canonical JSON artifacts are always persisted regardless of the chosen
@@ -1298,5 +1880,44 @@ mod tests {
             OutputMode::Summary
         );
         assert!(resolve_output_mode(Some("bogus")).is_err());
+    }
+
+    #[test]
+    fn redact_secrets_masks_credential_tokens_anywhere() {
+        let cases = [
+            ("no secrets here", "no secrets here"),
+            (
+                "api_key_env = \"sk-SUPERSECRET123456\"",
+                "api_key_env = \"[redacted]\"",
+            ),
+            (
+                "token=ghp_abcdefghijklmnopqrstuvwxyz123456",
+                "token=[redacted]",
+            ),
+            ("Bearer abcDEF123xyz", "[redacted]"),
+            ("AKIAIOSFODNN7EXAMPLE", "[redacted]"),
+            ("eyJhbGciOiJIUzI1NiJ9.payload", "[redacted].payload"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                redact_secrets(input),
+                expected,
+                "redaction mismatch for {input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn editor_command_splits_program_and_args() {
+        assert_eq!(
+            split_editor_command("nano").unwrap(),
+            vec!["nano".to_string()]
+        );
+        assert_eq!(
+            split_editor_command("code --wait").unwrap(),
+            vec!["code".to_string(), "--wait".to_string()]
+        );
+        assert!(split_editor_command("   ").is_none());
+        assert!(split_editor_command("").is_none());
     }
 }

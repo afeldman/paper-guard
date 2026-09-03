@@ -5,7 +5,7 @@
 //! so that both entry points drive the same pipeline from the same config.
 
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The project configuration root.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,6 +25,8 @@ pub struct AppConfig {
     pub memory: MemoryConfig,
     pub server: ServerConfig,
     pub discovery: DiscoverySectionConfig,
+    pub prompts: PromptsConfig,
+    pub bibliography: BibliographyConfig,
 }
 
 /// Top-level LLM provider selection.
@@ -454,12 +456,148 @@ impl Default for ProjectConfig {
     }
 }
 
+/// The `[prompts]` section — optional external reviewer prompts.
+///
+/// Reviewer prompts (the role instructions inside each reviewer's system
+/// prompt) can be overridden from files so they can be edited without
+/// recompiling Paper Guard. This section is entirely optional:
+///
+/// ```toml
+/// [prompts]
+/// directory = "~/.paper-guard/config/prompts"
+/// ```
+///
+/// When `directory` is unset, the default directory is
+/// `~/.paper-guard/config/prompts` (inside the canonical user directory,
+/// resolved portably through the platform home directory). A leading `~` in a
+/// configured path is expanded the same way and is never treated as a literal
+/// file name. External prompts are **untrusted configuration**; the loader
+/// never executes them, never loads files outside the configured directory,
+/// and never logs prompt content. Missing files fall back to the embedded
+/// defaults compiled into the binary; files that exist but cannot be read are
+/// hard errors, never a silent fallback.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+#[derive(Default)]
+pub struct PromptsConfig {
+    /// Optional external prompt directory (e.g. `~/.paper-guard/config/prompts`).
+    /// Tilde is expanded to the user's home directory portably. When unset,
+    /// the default `~/.paper-guard/config/prompts` is used.
+    pub directory: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 #[derive(Default)]
 pub struct InputConfig {
     /// Explicit format override (pdf, latex, typst, docx).
     pub format: Option<String>,
+}
+
+/// The optional Bibliography Verification layer (M10).
+///
+/// This is an **opt-in external network feature**, disabled by default.
+/// When enabled, Paper Guard sends only the necessary bibliographic metadata
+/// of each reference (title, authors, year, arXiv id, DOI) to the configured
+/// scholarly source. Full manuscript text is never transmitted.
+///
+/// Bibliography verification checks bibliographic metadata. It does **not**
+/// prove that a cited scientific statement is substantively correct.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BibliographyConfig {
+    /// Master switch. `false` (the default) keeps every run offline.
+    pub enabled: bool,
+    /// Which verification engine runs when enabled:
+    /// * `arxiv` — real arXiv API lookups (network; gated additionally by
+    ///   `[bibliography.arxiv] enabled`),
+    /// * `mock` — offline deterministic test/demo double. Mock results are
+    ///   clearly labelled and are never a real verification.
+    pub provider: String,
+    /// Per-request timeout for external scholarly sources (seconds).
+    pub timeout_seconds: u64,
+    /// arXiv provider section.
+    pub arxiv: BibliographyArxivConfig,
+    /// Google Scholar section. Paper Guard deliberately does **not** scrape
+    /// Google Scholar (fragile HTML, terms-of-service and rate-limit
+    /// concerns). When enabled, results are reported as `Unavailable` with an
+    /// explanatory note — never fabricated matches.
+    pub google_scholar: BibliographyGoogleScholarConfig,
+    /// Local response cache.
+    pub cache: BibliographyCacheConfig,
+}
+
+impl Default for BibliographyConfig {
+    fn default() -> Self {
+        BibliographyConfig {
+            enabled: false,
+            provider: "arxiv".into(),
+            timeout_seconds: 15,
+            arxiv: BibliographyArxivConfig { enabled: true },
+            google_scholar: BibliographyGoogleScholarConfig { enabled: false },
+            cache: BibliographyCacheConfig::default(),
+        }
+    }
+}
+
+impl BibliographyConfig {
+    /// Whether the layer should perform verification at all.
+    pub fn effective_enabled(&self) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        match self.provider.as_str() {
+            "mock" => true,
+            _ => self.arxiv.enabled,
+        }
+    }
+}
+
+/// The `[bibliography.arxiv]` section.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BibliographyArxivConfig {
+    /// Whether the arXiv provider may run when the master switch is on.
+    /// The endpoint itself is fixed (`export.arxiv.org`) and never configurable
+    /// — there is no SSRF surface through free-form provider URLs.
+    pub enabled: bool,
+}
+
+impl Default for BibliographyArxivConfig {
+    fn default() -> Self {
+        BibliographyArxivConfig { enabled: true }
+    }
+}
+
+/// The `[bibliography.google_scholar]` section.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BibliographyGoogleScholarConfig {
+    /// Whether the Google Scholar slot is enabled. Even when `true`, no
+    /// Scholar scraping is performed; results are `Unavailable`.
+    pub enabled: bool,
+}
+
+/// The `[bibliography.cache]` section — a bounded, transparent response cache.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BibliographyCacheConfig {
+    /// Master switch for the cache.
+    pub enabled: bool,
+    /// Maximum number of cached entries.
+    pub max_entries: usize,
+    /// Maximum total cache size in bytes.
+    pub max_bytes: usize,
+}
+
+impl Default for BibliographyCacheConfig {
+    fn default() -> Self {
+        BibliographyCacheConfig {
+            enabled: true,
+            max_entries: 200,
+            max_bytes: 8 * 1024 * 1024,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -599,6 +737,40 @@ impl AppConfig {
         }
     }
 
+    /// Load configuration with the documented user-config resolution:
+    ///
+    /// ```text
+    /// CLI arguments            (applied by the caller on top of the result)
+    /// explicit --config        (highest file priority)
+    /// ~/.paper-guard/config/config.toml   (user config)
+    /// built-in defaults
+    /// ```
+    ///
+    /// `explicit` is a path passed through `--config` (kept byte-compatible
+    /// with [`AppConfig::load`]); otherwise the canonical user config file is
+    /// used **only when it exists** — a missing user configuration is never an
+    /// error and falls through to the built-in defaults, so
+    /// `paper-guard review paper.tex` keeps working on a fresh machine.
+    pub fn load_user_preferred(explicit: Option<&Path>) -> anyhow::Result<AppConfig> {
+        Self::load_with_user_config(explicit, crate::paths::user_config_path().as_deref())
+    }
+
+    /// The pure core of [`AppConfig::load_user_preferred`] with an injectable
+    /// user-config path (used by tests and by embedders that resolve the
+    /// canonical user directory themselves).
+    pub fn load_with_user_config(
+        explicit: Option<&Path>,
+        user_config: Option<&Path>,
+    ) -> anyhow::Result<AppConfig> {
+        match explicit {
+            Some(path) => Self::load(Some(path)),
+            None => match user_config {
+                Some(path) if path.is_file() => Self::load(Some(path)),
+                _ => Ok(AppConfig::default()),
+            },
+        }
+    }
+
     /// Write the default config to a path (for `paper-guard init`).
     pub fn write_default_to(path: &Path) -> anyhow::Result<()> {
         let config = AppConfig::default();
@@ -610,6 +782,37 @@ impl AppConfig {
     /// The prompt version to use across agents.
     pub fn prompt_version(&self) -> &str {
         &self.reproducibility.prompt_version
+    }
+
+    /// Resolve the external prompt directory for this configuration.
+    ///
+    /// Priority: `[prompts] directory` when set (a leading `~` is expanded to
+    /// the platform home directory — never treated as a literal name);
+    /// otherwise the default `~/.paper-guard/config/prompts` inside the
+    /// canonical user directory. If no home directory can be resolved at all,
+    /// the last resort is a relative `.paper-guard/config/prompts` next to the
+    /// working directory (documented fallback; the platform home directory is
+    /// resolvable on every supported OS in practice).
+    pub fn prompts_dir(&self) -> anyhow::Result<PathBuf> {
+        let fallback = || {
+            crate::paths::default_prompts_dir()
+                .unwrap_or_else(|| PathBuf::from(".paper-guard/config/prompts"))
+        };
+        match &self.prompts.directory {
+            Some(dir) if dir.trim().is_empty() => Ok(fallback()),
+            Some(dir) => {
+                let home = dirs::home_dir();
+                let expanded = crate::paths::expand_user_path(dir, home.as_deref());
+                if expanded.to_string_lossy().starts_with('~') {
+                    anyhow::bail!(
+                        "cannot expand `~` in [prompts] directory `{dir}`: no home directory \
+                         is resolvable on this system"
+                    );
+                }
+                Ok(expanded)
+            }
+            None => Ok(fallback()),
+        }
     }
 
     /// A canonical JSON dump of the config for hashing.
@@ -937,5 +1140,90 @@ style = "funny"
         let toml_str = toml::to_string(&cfg).unwrap();
         let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.review.style, "neutral");
+    }
+
+    #[test]
+    fn prompts_config_defaults_to_none() {
+        let cfg = AppConfig::default();
+        assert!(cfg.prompts.directory.is_none());
+    }
+
+    #[test]
+    fn prompts_config_roundtrips() {
+        let src = r#"
+[prompts]
+directory = "~/.paper-guard/config/prompts"
+"#;
+        let cfg: AppConfig = toml::from_str(src).unwrap();
+        assert_eq!(
+            cfg.prompts.directory.as_deref(),
+            Some("~/.paper-guard/config/prompts")
+        );
+    }
+
+    #[test]
+    fn prompts_dir_default_never_contains_literal_tilde() {
+        let cfg = AppConfig::default();
+        let dir = cfg.prompts_dir().unwrap();
+        let s = dir.to_string_lossy();
+        assert!(!s.contains('~'), "resolved default must not contain ~: {s}");
+    }
+    #[test]
+    fn prompts_dir_expands_configured_tilde_with_home() {
+        let mut cfg = AppConfig::default();
+        cfg.prompts.directory = Some("~/my-prompts".into());
+        let dir = cfg.prompts_dir().unwrap();
+        let home = dirs::home_dir().expect("test environment has a home");
+        assert_eq!(dir, home.join("my-prompts"));
+    }
+
+    #[test]
+    fn prompts_dir_passes_absolute_configured_path_through() {
+        let mut cfg = AppConfig::default();
+        cfg.prompts.directory = Some("/opt/paper-guard/prompts".into());
+        assert_eq!(
+            cfg.prompts_dir().unwrap(),
+            PathBuf::from("/opt/paper-guard/prompts")
+        );
+    }
+
+    #[test]
+    fn prompts_dir_empty_string_uses_default() {
+        let mut cfg = AppConfig::default();
+        cfg.prompts.directory = Some(String::new());
+        let dir = cfg.prompts_dir().unwrap();
+        let s = dir.to_string_lossy();
+        assert!(!s.contains('~'));
+    }
+
+    #[test]
+    fn load_prefers_explicit_over_user_config_and_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let user_cfg = dir.path().join("config.toml");
+        std::fs::write(&user_cfg, "[project]\nname = \"from-user-config\"\n").unwrap();
+        let explicit = dir.path().join("explicit.toml");
+        std::fs::write(&explicit, "[project]\nname = \"from-explicit\"\n").unwrap();
+
+        // No explicit file → user config wins.
+        let cfg = AppConfig::load_with_user_config(None, Some(&user_cfg)).unwrap();
+        assert_eq!(cfg.project.name, "from-user-config");
+        // Explicit file wins over user config.
+        let cfg = AppConfig::load_with_user_config(Some(&explicit), Some(&user_cfg)).unwrap();
+        assert_eq!(cfg.project.name, "from-explicit");
+        // Missing user config is not an error → built-in defaults.
+        let cfg =
+            AppConfig::load_with_user_config(None, Some(&dir.path().join("nope.toml"))).unwrap();
+        assert_eq!(cfg.project.name, "my-paper");
+        let cfg = AppConfig::load_with_user_config(None, None).unwrap();
+        assert_eq!(cfg.project.name, "my-paper");
+    }
+
+    #[test]
+    fn load_user_preferred_uses_canonical_user_config_only_when_present() {
+        // In a test environment without a prepared user config, this must fall
+        // back to defaults without touching any real user file semantics.
+        let cfg = AppConfig::load_user_preferred(Some(Path::new("/definitely/missing/file.toml")))
+            .unwrap();
+        assert_eq!(cfg.project.name, "my-paper");
     }
 }

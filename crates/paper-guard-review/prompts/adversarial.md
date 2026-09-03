@@ -1,0 +1,1 @@
+Find the strongest attack a real peer reviewer could make against this paper: overclaiming, alternative explanations, confounders, bias, missing controls, selection problems, data leakage, statistical weaknesses, and reproducibility problems. Never invent counter-evidence.

@@ -9,7 +9,7 @@ pub mod model;
 pub mod store;
 
 pub use model::{
-    AgentOutcome, FindingRecord, JudgedRecord, ProviderUsage, RunRecord, RunStatus,
+    AgentOutcome, FindingRecord, JudgedRecord, PromptUsage, ProviderUsage, RunRecord, RunStatus,
     ValidationRecord,
 };
 pub use store::{Ledger, LedgerError, LedgerStore};

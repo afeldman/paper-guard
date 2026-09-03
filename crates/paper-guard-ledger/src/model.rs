@@ -1,6 +1,6 @@
 //! Ledger data model.
 
-use paper_guard_core::{ClaimId, ContentHash, FindingSeverity, FindingStatus};
+use paper_guard_core::{BibliographyResult, ClaimId, ContentHash, FindingSeverity, FindingStatus};
 use serde::{Deserialize, Serialize};
 
 /// The lifecycle status of a RunRecord.
@@ -31,6 +31,31 @@ pub struct AgentOutcome {
     /// reported. Secrets are never stored here.
     #[serde(default)]
     pub provider_usage: Option<ProviderUsage>,
+    /// Which prompt was actually used for this agent, for reproducibility.
+    ///
+    /// Additive metadata: absent in runs recorded before external prompts
+    /// existed, always recorded for enabled reviewers afterwards. Prompt text
+    /// is never stored — only source, content hash and (for external prompts)
+    /// the file path.
+    #[serde(default)]
+    pub prompt_usage: Option<PromptUsage>,
+}
+
+/// Identifies the prompt used for one agent of a run.
+///
+/// The SHA-256 is a stable hash of the full composed system prompt text that
+/// was sent to the model for that agent. Prompt contents are never stored.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptUsage {
+    /// The agent/prompt role name (e.g. "scientific").
+    pub prompt: String,
+    /// Prompt provenance: "embedded-default" or "external".
+    pub source: String,
+    /// SHA-256 (hex) of the composed system prompt actually used.
+    pub sha256: String,
+    /// Absolute path of the external prompt file, when `source` is external.
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 /// Generic provider usage metadata recorded in the ledger for auditability.
@@ -161,6 +186,11 @@ pub struct RunRecord {
     pub revision_results: Vec<String>,
     #[serde(default)]
     pub validation_results: Vec<ValidationRecord>,
+    /// Optional Bibliography Verification results (M10). Empty when the layer
+    /// is disabled or the paper has no references. Results are additive and
+    /// never alter reviewer findings.
+    #[serde(default)]
+    pub bibliography: Vec<BibliographyResult>,
     pub timestamp: String,
     pub status: RunStatus,
 }
@@ -196,6 +226,7 @@ impl RunRecord {
             judge_results: Vec::new(),
             revision_results: Vec::new(),
             validation_results: Vec::new(),
+            bibliography: Vec::new(),
             timestamp: timestamp.to_string(),
             status: RunStatus::InProgress,
         }
@@ -261,5 +292,72 @@ mod tests {
         assert!(run.same_input_as(&hash));
         assert_eq!(run.status, RunStatus::InProgress);
         let _ = EvidenceState::default();
+    }
+
+    #[test]
+    fn agent_outcome_without_prompt_usage_parses_backward_compatible() {
+        // Run records written before the external-prompt feature do not carry
+        // the `prompt_usage` field; they must still load with the new schema.
+        let json = r#"{
+            "agent": "scientific",
+            "status": "success",
+            "error": null,
+            "finding_count": 0,
+            "provider_usage": null
+        }"#;
+        let o: AgentOutcome = serde_json::from_str(json).unwrap();
+        assert!(o.prompt_usage.is_none());
+    }
+
+    #[test]
+    fn prompt_usage_roundtrips_without_prompt_content() {
+        let usage = PromptUsage {
+            prompt: "scientific".into(),
+            source: "external".into(),
+            sha256: "abc123".into(),
+            path: Some("/tmp/prompts/scientific.md".into()),
+        };
+        let json = serde_json::to_string(&usage).unwrap();
+        assert!(
+            !json.contains("instructions"),
+            "never stores prompt content"
+        );
+        let back: PromptUsage = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.sha256, "abc123");
+        let legacy: PromptUsage = serde_json::from_str(
+            r#"{"prompt":"scientific","source":"embedded-default","sha256":"d3ad"}"#,
+        )
+        .unwrap();
+        assert!(legacy.path.is_none());
+    }
+
+    #[test]
+    fn legacy_run_record_without_bibliography_loads() {
+        // Run records written before the M10 layer do not carry the
+        // `bibliography` field; they must still load with the new schema and
+        // default to an empty bibliography result list.
+        let json = r#"{
+            "schema_version": "1.0",
+            "run_id": "run-001",
+            "parent_run": null,
+            "input_hash": "abc123",
+            "source_format": "latex",
+            "parser_version": "1.0",
+            "paper_guard_version": "1.0.0",
+            "configuration_hash": "cfg123",
+            "model_configuration": "{}",
+            "reviewer_results": [],
+            "findings": [],
+            "judge_results": [],
+            "revision_results": [],
+            "validation_results": [],
+            "timestamp": "2026-01-01T00:00:00Z",
+            "status": "completed"
+        }"#;
+        let record: RunRecord = serde_json::from_str(json).unwrap();
+        assert!(record.bibliography.is_empty());
+        // And the new field round-trips.
+        let serialized = serde_json::to_string(&record).unwrap();
+        assert!(serialized.contains("\"bibliography\":[]"));
     }
 }

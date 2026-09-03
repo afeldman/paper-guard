@@ -66,7 +66,11 @@ impl GuiStartup {
 /// process is interrupted.
 pub async fn start_gui(opts: &GuiOptions) -> anyhow::Result<GuiStartup> {
     let cfg_path = opts.config_path.as_deref();
-    let cfg = AppConfig::load(cfg_path.map(std::path::Path::new))?;
+    // Resolution: an explicit config path wins; otherwise the canonical user
+    // configuration (`~/.paper-guard/config/config.toml`) is used when it
+    // exists; otherwise built-in defaults. A missing user configuration is
+    // never an error.
+    let cfg = AppConfig::load_user_preferred(cfg_path.map(std::path::Path::new))?;
     let data_dir = cfg.service.data_dir.clone();
     let mem = paper_guard_app::MemoryService::from_config(&cfg)?;
 

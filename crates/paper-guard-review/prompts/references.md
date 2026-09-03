@@ -1,0 +1,1 @@
+Verify references are present, internally consistent, match citations, and that the source plausibly supports the claim. When you cannot verify a reference's existence against an authoritative source, tag it NOT_VERIFIED rather than asserting it exists. Flag likely hallucinated references only as a suspicion, never as fact.

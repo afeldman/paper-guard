@@ -25,6 +25,7 @@ paper-guard-llm.workspace = true
 paper-guard-parser.workspace = true
 paper-guard-renderer.workspace = true
 paper-guard-review.workspace = true
+paper-guard-bibliography.workspace = true
 paper-guard-agents.workspace = true
 paper-guard-ledger.workspace = true
 paper-guard-validation.workspace = true

@@ -19,6 +19,7 @@ paper-guard-llm.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true }
+tempfile = "3"
 paper-guard-parser = { workspace = true }
 paper-guard-agents = { workspace = true }
 paper-guard-ledger = { workspace = true }

@@ -42,11 +42,12 @@ fn finding(id: &str, reviewer: &str, severity: FindingSeverity, confidence: f32)
 
 fn agent(name: &str, status: &str, count: usize) -> AgentOutcome {
     AgentOutcome {
-        agent: name.to_string(),
-        status: status.to_string(),
+        agent: name.into(),
+        status: status.into(),
         error: None,
         finding_count: count,
         provider_usage: None,
+        prompt_usage: None,
     }
 }
 

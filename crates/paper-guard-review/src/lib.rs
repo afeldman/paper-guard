@@ -10,6 +10,7 @@
 
 pub mod judge;
 pub mod output;
+pub mod prompts;
 pub mod reviewer;
 pub mod reviewers;
 pub mod runner;
@@ -17,6 +18,10 @@ pub mod schema;
 
 pub use judge::{Judge, JudgeAction, JudgeOutput, JudgeResult};
 pub use output::{resolve_findings, ReviewOutputError, ReviewerOutput, REVIEWER_OUTPUT_INVALID};
+pub use prompts::{
+    compose_system_prompt, embedded_focused, init_prompt_directory, prompt_file_name,
+    resolve_prompt, PromptSource, PromptedReviewer, ResolvedPrompt, PROMPT_ROLES,
+};
 pub use reviewer::{
     render_document_for_prompt, render_memory_context, AdversarialReviewer, EvidenceReviewer,
     FigureReviewer, ReferenceReviewer, Reviewer, ReviewerContext, ReviewerSettings,

@@ -1,0 +1,21 @@
+[package]
+name = "paper-guard-bibliography"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Deterministic bibliography verification layer (arXiv, Scholar status, cache)."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+regex.workspace = true
+async-trait.workspace = true
+sha2.workspace = true
+hex.workspace = true
+reqwest.workspace = true
+paper-guard-core.workspace = true
+
+[dev-dependencies]
+futures.workspace = true
+tempfile = "3"

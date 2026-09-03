@@ -268,6 +268,21 @@ arbitrary locations. Defaults (overridable via your config):
 | Cache         | `%LOCALAPPDATA%\paper-guard\cache\`                 |
 | Logs          | `%LOCALAPPDATA%\paper-guard\logs\`                  |
 
+Paper Guard also owns one canonical per-user directory below your home
+profile (used for user configuration, editable prompts, and rolling logs):
+
+| Purpose                       | Windows location                                            |
+|-------------------------------|-------------------------------------------------------------|
+| Canonical user directory      | `%USERPROFILE%\.paper-guard\`                               |
+| User configuration            | `%USERPROFILE%\.paper-guard\config\config.toml`             |
+| Editable reviewer prompts     | `%USERPROFILE%\.paper-guard\config\prompts\`                |
+| Rolling technical logs        | `%USERPROFILE%\.paper-guard\logs\paper-guard.log` (10 MiB × 5) |
+| Per-user data (opt-in)        | `%USERPROFILE%\.paper-guard\data\`                          |
+
+Run `paper-guard setup` once to create this layout (idempotent; never
+overwrites existing files). Prompts are plain Markdown — editing them needs no
+rebuild; the built-in defaults remain the fallback.
+
 Manuscripts are only ever read from where you point `review` at them; they are
 never copied into logs, cache, or telemetry automatically.
 

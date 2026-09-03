@@ -131,6 +131,9 @@ pub fn build_human_report(record: &RunRecord, header: &ReportHeader, style: Revi
         );
     }
 
+    // --- Bibliography Verification (M10) ---
+    render_bibliography_section(&mut out, record);
+
     // --- Judge ---
     out.push_str("Judge\n");
     out.push_str("=====\n\n");
@@ -245,6 +248,63 @@ fn render_single_finding(out: &mut String, f: &FindingRecord, fmt: &dyn Formatte
         fmt.recommendation(f)
     ));
     out.push('\n');
+}
+
+/// Render the optional Bibliography Verification results.
+///
+/// This section is data-only and style-independent: the neutral/funny/
+/// insulting styles never alter these rows, and no style ever attacks authors
+/// personally. Results are additive — they never change reviewer findings.
+fn render_bibliography_section(out: &mut String, record: &RunRecord) {
+    out.push_str("Bibliography Verification\n");
+    out.push_str("=========================\n\n");
+    if record.bibliography.is_empty() {
+        out.push_str("Bibliography verification was not run (disabled by default).\n\n");
+        return;
+    }
+    let mut scholar_rows = 0usize;
+    for result in &record.bibliography {
+        if result.source == "google_scholar" {
+            scholar_rows += 1;
+            continue;
+        }
+        out.push_str(&format!(
+            "{} {}\n",
+            result.status.glyph(),
+            result.reference_id
+        ));
+        let citation = result.display_citation();
+        if citation != result.reference_id {
+            out.push_str(&format!("    {citation}\n"));
+        }
+        out.push_str(&format!("    Source: {}\n", result.source));
+        out.push_str(&format!(
+            "    {} (confidence {:.2})\n",
+            result.status.label(),
+            result.confidence
+        ));
+        if let Some(note) = &result.note {
+            out.push_str(&format!("    {note}\n"));
+        }
+        for m in &result.mismatches {
+            out.push_str(&format!(
+                "    Mismatch — {}: paper says {:?}, source says {:?}\n",
+                m.field, m.paper_value, m.source_value
+            ));
+        }
+        if result.from_cache {
+            out.push_str("    (served from local cache)\n");
+        }
+        out.push('\n');
+    }
+    if scholar_rows > 0 {
+        out.push_str(&format!(
+            "Google Scholar: {} ({} reference(s) — Scholar is not automated by Paper \
+             Guard; see documentation)\n\n",
+            paper_guard_core::VerificationStatus::Unavailable.label(),
+            scholar_rows
+        ));
+    }
 }
 
 /// Render the consolidated findings (post-Judge), grouped by source reviewer.

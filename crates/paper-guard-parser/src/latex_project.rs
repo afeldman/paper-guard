@@ -285,9 +285,17 @@ impl Resolver {
 }
 
 fn relative_to(root_dir: &Path, path: &Path) -> String {
-    path.strip_prefix(root_dir)
+    let rel = path
+        .strip_prefix(root_dir)
         .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| path.to_string_lossy().into_owned());
+    // Normalize to forward slashes so rel_path is stable across platforms
+    // (e.g. Windows uses `\` as the path separator).
+    if std::path::MAIN_SEPARATOR != '/' {
+        rel.replace(std::path::MAIN_SEPARATOR, "/")
+    } else {
+        rel
+    }
 }
 
 /// The display path of a file for the `include_parent` field.
